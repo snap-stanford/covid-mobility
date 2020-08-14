@@ -39,7 +39,7 @@ and informs reopening strategies](https://www.medrxiv.org/content/10.1101/2020.0
 
 **helper_methods_for_aggregate_data_analysis.py**: Various helper methods used in data processing and throughout the analysis. 
 
-**disease_model.py**: Implements the disease model on the mobility network. 
+**disease_model.py**: Implements the SEIR disease models (our model that integrates mobility network data, the aggregate mobility model, and the no-mobility baseline).
 
 **model_experiments.py**: Runs models for the experiments described in the paper. 
 
