@@ -47,6 +47,7 @@ class Model:
                                  confirmation_lag=168,  # 7 days
                                  death_rate=.0066,
                                  death_lag=432,  # 18 days
+                                 track_full_history_for_all_CBGs=False,
                                  poi_subcategory_types=None):
 
         self.M = len(poi_areas)
@@ -71,7 +72,6 @@ class Model:
             print('Received POI_CBG_VISITS_LIST, will NOT be computing hourly matrices on the fly')
             assert len(self.POI_CBG_VISITS_LIST) == self.T
             assert self.POI_CBG_VISITS_LIST[0].shape == (self.M, self.N)
-            assert cbg_day_prop_out is None
         else:
             # will use this matrix to compute hourly counts; must match all_hours length
             assert self.POI_TIME_COUNTS.shape[1] == self.T
@@ -100,6 +100,7 @@ class Model:
         self.P_SICK_AT_T0 = p_sick_at_t0  # percentage of CBG that starts off sick
         self.just_compute_r0 = just_compute_r0
         self.INTERVENTION_COST = intervention_cost
+        self.track_full_history_for_all_CBGs = track_full_history_for_all_CBGs
 
         self.confirmation_rate = confirmation_rate
         self.confirmation_lag = confirmation_lag
@@ -149,6 +150,7 @@ class Model:
         self.new_confirmed_cases = np.zeros((self.num_seeds, self.N))
         self.deaths_to_happen = np.zeros((self.num_seeds, self.N))
         self.new_deaths = np.zeros((self.num_seeds, self.N))
+        self.full_history_for_all_CBGs = None
 
         # Monitor clipping of Poisson approximation.
         self.clipping_monitor = {
@@ -197,13 +199,17 @@ class Model:
     def simulate_disease_spread(self, verbosity=24,
                                 simulate_cases=False, simulate_deaths=False,
                                 groups_to_track_num_cases_per_poi=None,
-                                use_aggregate_mobility=False):
+                                use_aggregate_mobility=False,
+                                use_home_proportion_beta=False,
+                                do_ipf=False):
         '''
         Simulate disease spread over the bipartite network.
-        T: the total number of iterations to run; however, if the disease
-           dies out before T, the simulation stops
         verbosity: how often to print output
         '''
+        self.do_ipf = do_ipf
+        if self.do_ipf:
+            assert self.cbg_day_prop_out is not None
+
         self.simulate_cases = simulate_cases
         if not self.simulate_cases:
             for group in self.cbg_idx_groups_to_track:
@@ -212,17 +218,23 @@ class Model:
         if not self.simulate_deaths:
             for group in self.cbg_idx_groups_to_track:
                 del self.history[group]['new_deaths']
+
         self.use_aggregate_mobility = use_aggregate_mobility
         if self.use_aggregate_mobility:
             print('Using aggregate mobility; will IGNORE POI-specific factors and network.')
-            assert not groups_to_track_num_cases_per_poi  # no poi-specific cases if using aggregate
+            assert groups_to_track_num_cases_per_poi is None  # cannot have poi-specific cases if using aggregate
+
+        self.use_home_proportion_beta = use_home_proportion_beta
+        if self.use_home_proportion_beta:
+            print('Using proportion at home to scale time-varying beta')
+            assert self.cbg_day_prop_out is not None
 
         if groups_to_track_num_cases_per_poi is None:
             groups_to_track_num_cases_per_poi = {}
         self.groups_to_track_num_cases_per_poi = groups_to_track_num_cases_per_poi
         for group in self.groups_to_track_num_cases_per_poi:
-            print('Tracking num cases per poi for %s' % group)
-            self.history[group]['num_cases_per_poi'] = np.zeros((self.num_seeds, self.M))
+            print('Tracking num cases per POI + day for %s' % group)
+            self.history[group]['num_cases_per_poi'] = np.zeros((self.num_seeds, self.M, int(self.T / 24)))
 
         if verbosity > 0:
             print('=== PARAMETERS ===')
@@ -325,6 +337,14 @@ class Model:
         self.update_history(t)
 
     def update_history(self, t):
+        if self.track_full_history_for_all_CBGs:
+            # turned off by default because this variable is large, n_timestamps x n_CBGs
+            if self.full_history_for_all_CBGs is None:
+                self.full_history_for_all_CBGs = {'latent':[], 'infected':[], 'removed':[]}
+            self.full_history_for_all_CBGs['latent'].append(self.cbg_latent.mean(axis=0)) # mean across seeds
+            self.full_history_for_all_CBGs['infected'].append(self.cbg_infected.mean(axis=0)) # mean across seeds
+            self.full_history_for_all_CBGs['removed'].append(self.cbg_removed.mean(axis=0)) # mean across seeds
+
         for group in self.cbg_idx_groups_to_track:
             group_idxs = self.cbg_idx_groups_to_track[group]
             self.history[group]['new_cases'][:, t] = np.sum(self.cbg_new_cases[:, group_idxs], axis=1)
@@ -350,8 +370,9 @@ class Model:
                 for s in range(self.num_seeds):
                     seed_poi_cbg_infected = self.cbg_num_cases_per_poi[s]
                     seed_poi_group_infected = seed_poi_cbg_infected @ group_indicator  # 1 x M
-                    prev_total = self.history[group]['num_cases_per_poi'][s]
-                    self.history[group]['num_cases_per_poi'][s] = prev_total + seed_poi_group_infected
+                    day = int(t / 24)
+                    prev_total = self.history[group]['num_cases_per_poi'][s, :, day]
+                    self.history[group]['num_cases_per_poi'][s, :, day] = prev_total + seed_poi_group_infected
 
     def fill_remaining_history(self, t):
         for group in self.cbg_idx_groups_to_track:
@@ -388,7 +409,12 @@ class Model:
 
         if self.PSI > 0:
             # Our model: can only be infected by people in your home CBG.
-            cbg_base_infection_rates = self.HOME_BETA * cbg_densities  # S x N
+            if self.use_home_proportion_beta:
+                day = int(t / 24)
+                cbg_prop_home = 1 - self.cbg_day_prop_out[:, day]  # 1 x N
+                cbg_base_infection_rates = self.HOME_BETA * cbg_prop_home * cbg_densities  # S x N
+            else:
+                cbg_base_infection_rates = self.HOME_BETA * cbg_densities  # S x N
         else:
             # Ablation: standard model with uniform mixing.
             cbg_base_infection_rates = np.tile(overall_densities, self.N) * self.HOME_BETA  # S x N
@@ -404,13 +430,12 @@ class Model:
             poi_visits = self.POI_TIME_COUNTS[:, t]  # M
             poi_cbg_visits = sparse.diags(poi_visits) @ self.POI_CBG_PROPORTIONS  # M x N
 
-            # Do IPF if cbg_day_prop_out is provided
-            if self.cbg_day_prop_out is not None:
+            if self.do_ipf:
                 day = int(t / 24)
                 cbg_prop_out = self.cbg_day_prop_out[:, day]
 
                 # rows are POIs, columns are CBGs.
-                target_row_sums = poi_visits * (self.POI_CBG_PROPORTIONS @ np.ones(self.POI_CBG_PROPORTIONS.shape[1])) # POI sums. This is the same as poi_visits * np.sum(self.POI_CBG_PROPORTIONS, axis = 1) but it's 5x faster for totally unknown reasons
+                target_row_sums = poi_visits * (self.POI_CBG_PROPORTIONS @ np.ones(self.POI_CBG_PROPORTIONS.shape[1])) # POI sums. This is the same as poi_visits * np.sum(self.POI_CBG_PROPORTIONS, axis = 1) but it's 5x faster 
                 target_col_sums = cbg_prop_out * self.CBG_SIZES # CBG sums
                 target_col_sums = target_col_sums * np.sum(target_row_sums) / np.sum(target_col_sums) # Renormalize to match POI sums
 
@@ -444,8 +469,8 @@ class Model:
 
         if self.use_aggregate_mobility:  # don't use network data, just use total number of POI visits in this hour
             visits_per_capita = np.sum(poi_visits) / np.sum(self.CBG_SIZES)
-            cbg_agg_poi_infection_rates = np.tile(overall_densities, self.N) * self.PSI * visits_per_capita  # S x N           
-            cbg_agg_poi_infection_rates_clipped = np.sum(cbg_agg_poi_infection_rates > 1) 
+            cbg_agg_poi_infection_rates = np.tile(overall_densities, self.N) * self.PSI * visits_per_capita  # S x N
+            cbg_agg_poi_infection_rates_clipped = np.sum(cbg_agg_poi_infection_rates > 1)
             assert (cbg_agg_poi_infection_rates_clipped / self.N) < 0.25  # should not be clipping too many CBGs
             cbg_agg_poi_infection_rates = np.clip(cbg_agg_poi_infection_rates, None, 1.0)
             cbg_mean_new_cases_from_poi = num_sus * cbg_agg_poi_infection_rates
@@ -455,7 +480,7 @@ class Model:
             self.num_poi_infection_rates_clipped = 0
             self.cbg_num_out = np.zeros(self.N)
             self.num_cbgs_active_at_pois = 0
-            
+
         else:  # use network data
             self.num_active_pois = np.sum(poi_visits > 0)
             col_sums = np.squeeze(np.array(poi_cbg_visits.sum(axis=0)))
@@ -483,7 +508,7 @@ class Model:
 
         if self.debug:
             print(f'using poisson approx: expected new cases = {np.sum(cbg_mean_new_cases)}')
-        
+
         self.num_cbgs_with_clipped_poi_cases = np.sum(num_cases_from_poi > num_sus)
         self.cbg_new_cases_from_poi = np.clip(num_cases_from_poi, None, num_sus)
         num_sus_remaining = num_sus - self.cbg_new_cases_from_poi

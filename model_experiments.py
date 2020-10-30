@@ -69,68 +69,14 @@ def MSE(y_true, y_pred):
     '''
     return np.mean((y_true - y_pred) ** 2)
 
-def gaussianish_negative_ll(y_true, y_pred, sum_or_logsumexp):
-    # Gaussian but we try to estimate the variance by looking at variance over seeds
-    # y_pred should be n_seeds x n_timesteps
-    assert len(y_pred.shape) == 2
-    assert len(y_true.shape) == 1
-    sq_err = (y_true - y_pred) ** 2
-    variance = np.std(y_pred, axis=0, ddof=1) ** 2 # Variance across seeds
-    variance = np.clip(variance, 4, None)
-    # First sum log-likelihoods over days
-    ll = np.sum(-.5 * np.log(variance) - .5 * sq_err/variance, axis=1)
-    # Then sum or logsumexp over seeds
-    ll = sum_or_logsumexp(ll)
-    return -ll
-
-def NLL_with_var_y(y_true, y_pred, sum_or_logsumexp):
-    # Gaussian with variance proportional to y_pred
-    # Similar to what Li et al. (2020) tried
-    # Use y_pred instead of y_true to compute the variance, since we're assuming that
-    # the model predictions are the truth
-    assert len(y_pred.shape) == 2
-    assert len(y_true.shape) == 1
-    sq_err = (y_true - y_pred) ** 2
-    variance = np.clip(y_pred, 4, None)
-    # First sum log-likelihoods over days
-    ll = np.sum(-.5 * np.log(variance) - .5 * sq_err/variance, axis=1)
-    # Then sum or logsumexp over seeds
-    ll = sum_or_logsumexp(ll)
-    return -ll
-
-def NLL_with_var_ysq(y_true, y_pred, sum_or_logsumexp):
-    # Gaussian with variance proportional to y_pred^2
-    # Similar to what Li et al. (2020) tried
-    # Use y_pred instead of y_true to compute the variance, since we're assuming that
-    # the model predictions are the truth
-    assert len(y_pred.shape) == 2
-    assert len(y_true.shape) == 1
-    sq_err = (y_true - y_pred) ** 2
-    variance = np.clip((y_pred ** 2) / 4, 4, None)
-    # First sum log-likelihoods over days
-    ll = np.sum(-.5 * np.log(variance) - .5 * sq_err/variance, axis=1)
-    # Then sum or logsumexp over seeds
-    ll = sum_or_logsumexp(ll)
-    return -ll
-
 def poisson_NLL(y_true, y_pred, sum_or_logsumexp):
+    # We clip variance to a min of 4, similar to Li et al. (2020)
     # First sum log-likelihoods over days
     variance = np.clip(y_pred, 4, None)
     ll = np.sum(poisson.logpmf(y_true, variance), axis=1)
     # Then sum or logsumexp over seeds
     ll = sum_or_logsumexp(ll)
     return -ll
-
-def binomial_NLL(y_true, y_pred, rate, sum_or_logsumexp):
-    # First divide y_pred by the rate, since it's already been multiplied by this rate
-    # earlier in the code
-    mdl_IR = (y_pred / rate).astype(int)
-    # Sum log-likelihoods over days
-    ll = np.sum(binom.logpmf(y_true, mdl_IR, rate), axis=1)
-    # Then sum or logsumexp over seeds
-    ll = sum_or_logsumexp(ll)
-    return -ll
-
 
 ###################################################
 # Code for running one model
@@ -200,9 +146,6 @@ def fit_disease_model_on_real_data(d,
         f = open(preload_poi_visits_list_filename, 'rb')
         poi_cbg_visits_list = pickle.load(f)
         f.close()
-    if poi_cbg_visits_list is not None:
-        # can't provide both cbg_prop_out (which triggers IPF) and precomputed poi_cbg matrices
-        assert not include_cbg_prop_out
 
     t0 = time.time()
     print('1. Processing SafeGraph data...')
@@ -1135,6 +1078,94 @@ def load_model_and_data_from_timestring(timestring, verbose=False, load_original
     else:
         return model, data_and_model_kwargs, d, model_results, fast_to_load_results
 
+def get_full_activity_num_visits(msa, intervention_datetime, extra_weeks_to_simulate, min_datetime, max_datetime):
+    """
+    Get the total number of visits post-intervention date assuming we just looped activity from the first week
+    """
+    fn = get_ipf_filename(msa, min_datetime, max_datetime, True, True)
+    f = open(fn, 'rb')
+    poi_cbg_visits_list = pickle.load(f)
+    f.close()
+    all_hours = helper.list_hours_in_range(min_datetime, max_datetime + datetime.timedelta(hours=168 * extra_weeks_to_simulate))
+    assert(intervention_datetime in all_hours)
+    intervention_hour_idx = all_hours.index(intervention_datetime)
+    full_total = 0
+    for t in range(intervention_hour_idx, len(all_hours)):
+        full_activity_matrix = poi_cbg_visits_list[t % 168]
+        full_total += full_activity_matrix.sum()
+    return full_total, intervention_hour_idx
+
+def get_lir_checkpoints_and_prop_visits_lost(timestring, intervention_hour_idx,
+                                             full_activity_num_visits=None, group='all', normalize=True):
+    """
+    Returns the fraction of the population in state L+I+R at two checkpoints: at the point of reopening,
+    and at the end of the simulation. Also returns the proportion of visits lost after the reopening,
+    compared to full reopening.
+    """
+    model, kwargs, _, _, fast_to_load_results = load_model_and_data_from_timestring(timestring,
+                                                                 load_fast_results_only=False,
+                                                                 load_full_model=True)
+    group_history = model.history[group]
+    lir = group_history['latent'] + group_history['infected'] + group_history['removed']
+    pop_size = group_history['total_pop']
+    if normalize:
+        intervention_lir = lir[:, intervention_hour_idx] / pop_size
+        final_lir = lir[:, -1] / pop_size
+    else:
+        intervention_lir = lir[:, intervention_hour_idx]
+        final_lir = lir[:, -1]
+    intervention_cost = fast_to_load_results['intervention_cost']
+    if 'total_activity_after_max_capacity_capping' in intervention_cost:
+        # the max_capacity_capping and uniform reduction experiments save different activity measures
+        # the max_capacity_capping experiments save 'total_activity_after_max_capacity_capping'
+        # which needs to be translated into prop visits lost
+        # the uniform reduction experiments save 'overall_cost' which is the percentage of visits lost
+        # so it needs to be divided by 100 to be a decimal
+        assert full_activity_num_visits is not None
+        num_visits = intervention_cost['total_activity_after_max_capacity_capping']
+        visits_lost = (full_activity_num_visits - num_visits) / full_activity_num_visits
+    else:
+        assert 'overall_cost' in intervention_cost
+        visits_lost = intervention_cost['overall_cost'] / 100
+    return intervention_lir, final_lir, visits_lost
+
+def get_uniform_proportions_per_msa(min_timestring=None, max_cap_df=None, verbose=True):
+    """
+    Get the proportion of visits kept for each max capacity experiment, so that we can run the corresponding
+    experiment with uniform reduction.
+    """
+    assert not(min_timestring is None and max_cap_df is None)
+    if max_cap_df is None:
+        max_cap_df = evaluate_all_fitted_models_for_experiment('test_max_capacity_clipping',
+                                                       min_timestring=min_timestring)
+    max_cap_df['MSA_name'] = max_cap_df['data_kwargs'].map(lambda x:x['MSA_name'])
+    k = 'max_capacity_alpha'
+    max_cap_df['counterfactual_%s' % k] = max_cap_df['counterfactual_poi_opening_experiment_kwargs'].map(lambda x:x[k])
+    extra_weeks_to_simulate = max_cap_df.iloc[0]['counterfactual_poi_opening_experiment_kwargs']['extra_weeks_to_simulate']
+    intervention_datetime = max_cap_df.iloc[0]['counterfactual_poi_opening_experiment_kwargs']['intervention_datetime']
+    min_datetime = max_cap_df.iloc[0]['model_kwargs']['min_datetime']
+    max_datetime = max_cap_df.iloc[0]['model_kwargs']['max_datetime']
+
+    msa2proportions = {}
+    for msa in max_cap_df.MSA_name.unique():
+        full_activity, intervention_idx = get_full_activity_num_visits(msa,
+                                               intervention_datetime=intervention_datetime,
+                                               extra_weeks_to_simulate=extra_weeks_to_simulate,
+                                               min_datetime=min_datetime,
+                                               max_datetime=max_datetime)
+        msa_df = max_cap_df[max_cap_df['MSA_name'] == msa]
+        values = sorted(msa_df['counterfactual_max_capacity_alpha'].unique())
+        proportions = []
+        for v in values:
+            first_ts = msa_df[msa_df.counterfactual_max_capacity_alpha == v].iloc[0].timestring
+            _, _, visits_lost = get_lir_checkpoints_and_prop_visits_lost(first_ts,
+                        intervention_idx, group='all', full_activity_num_visits=full_activity)
+            proportions.append(np.round(1 - visits_lost, 5))
+        msa2proportions[msa] = proportions
+        if verbose:
+            print(msa, proportions)
+    return msa2proportions
+
 ###################################################
 # Code for running many models in parallel
 ###################################################
@@ -1199,6 +1230,9 @@ def generate_data_and_model_configs(msas_to_fit=10,
                             'p_sick_at_t0':1e-4,
                             'just_compute_r0':False,
                           },
+                          'simulation_kwargs': {
+                              'do_ipf':True,
+                          },
                           'poi_attributes_to_clip':{
                               'clip_areas':True,
                               'clip_dwell_times':True,
@@ -1215,25 +1249,37 @@ def generate_data_and_model_configs(msas_to_fit=10,
         p_sicks = [1e-2, 5e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4, 5e-5, 2e-5, 1e-5]
         home_betas = np.linspace(BETA_AND_PSI_PLAUSIBLE_RANGE['min_home_beta'],
             BETA_AND_PSI_PLAUSIBLE_RANGE['max_home_beta'], 10)
-        #[0.001, 0.002, 0.005, 0.008, 0.01, 0.012]
         poi_psis = np.linspace(BETA_AND_PSI_PLAUSIBLE_RANGE['min_poi_psi'], BETA_AND_PSI_PLAUSIBLE_RANGE['max_poi_psi'], 15)
-        #[a for a in np.arange(500, 5001, 500)]
         for home_beta in home_betas:
             for poi_psi in poi_psis:
                 for p_sick in p_sicks:
                     configs_with_changing_params.append({'home_beta':home_beta, 'poi_psi':poi_psi, 'p_sick_at_t0':p_sick})
 
         # ablation analyses.
-        for home_beta in np.linspace(0.005, 0.04, 20):#sorted(list(set(home_betas + list(np.arange(0.0001, 0.002, 0.0001)) + [0.0015, 0.003, 0.004]))):
+        for home_beta in np.linspace(0.005, 0.04, 20):
             for p_sick in p_sicks:
                 configs_with_changing_params.append({'home_beta':home_beta, 'poi_psi':0, 'p_sick_at_t0':p_sick})
 
     elif experiment_to_run == 'grid_search_aggregate_mobility':
         p_sicks = [1e-2, 5e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4, 5e-5, 2e-5, 1e-5]
+        beta_and_psi_plausible_range_for_aggregate_mobility = {"min_home_beta": 0.0011982272027079982,
+                                        "max_home_beta": 0.023964544054159966,
+                                        "max_poi_psi": 0.25,
+                                        "min_poi_psi": 2.5}
+        home_betas = np.linspace(beta_and_psi_plausible_range_for_aggregate_mobility['min_home_beta'],
+                                 beta_and_psi_plausible_range_for_aggregate_mobility['max_home_beta'], 10)
+        poi_psis = np.linspace(beta_and_psi_plausible_range_for_aggregate_mobility['min_poi_psi'],
+                               beta_and_psi_plausible_range_for_aggregate_mobility['max_poi_psi'], 15)
+        for home_beta in home_betas:
+            for poi_psi in poi_psis:
+                for p_sick in p_sicks:
+                    configs_with_changing_params.append({'home_beta':home_beta, 'poi_psi':poi_psi, 'p_sick_at_t0':p_sick})
+
+    elif experiment_to_run == 'grid_search_home_proportion_beta':
+        p_sicks = [1e-2, 5e-3, 2e-3, 1e-3, 5e-4, 2e-4, 1e-4, 5e-5, 2e-5, 1e-5]
         home_betas = np.linspace(BETA_AND_PSI_PLAUSIBLE_RANGE['min_home_beta'],
-                                 BETA_AND_PSI_PLAUSIBLE_RANGE['max_home_beta'], 10)
-        poi_psis = np.linspace(BETA_AND_PSI_PLAUSIBLE_RANGE['min_poi_psi'],
-                               BETA_AND_PSI_PLAUSIBLE_RANGE['max_poi_psi'], 15)
+            BETA_AND_PSI_PLAUSIBLE_RANGE['max_home_beta'], 10)
+        poi_psis = np.linspace(BETA_AND_PSI_PLAUSIBLE_RANGE['min_poi_psi'], BETA_AND_PSI_PLAUSIBLE_RANGE['max_poi_psi'], 15)
         for home_beta in home_betas:
             for poi_psi in poi_psis:
                 for p_sick in p_sicks:
@@ -1275,10 +1321,7 @@ def generate_data_and_model_configs(msas_to_fit=10,
             raise Exception("Not a valid means of selecting best-fit models")
         print("selecting best grid search models using criterion %s" % how_to_select_best_grid_search_models)
 
-        # examine most common POI categories.
-        most_visited_poi_subcategories = get_list_of_poi_subcategories_with_most_visits(n_poi_categories=poi_categories_to_examine)
-
-        # Get list of all fitted models.
+        # get list of all fitted models -- need this for any of the "best fit models" experiments
         model_timestrings, model_msas = filter_timestrings_for_properties(
             min_timestring=min_timestring_to_load_best_fit_models_from_grid_search,
             required_properties={'experiment_to_run':'normal_grid_search'},
@@ -1286,6 +1329,19 @@ def generate_data_and_model_configs(msas_to_fit=10,
         print("Found %i models after %s" % (len(model_timestrings), min_timestring_to_load_best_fit_models_from_grid_search))
         timestring_msa_df = pd.DataFrame({'model_timestring':model_timestrings, 'model_msa':model_msas})
         n_models_for_msa_prior_to_quality_filter = None
+
+        # get experiment-specific stuff
+        if experiment_to_run == 'test_interventions':
+            most_visited_poi_subcategories = get_list_of_poi_subcategories_with_most_visits(n_poi_categories=poi_categories_to_examine)
+        else:
+            most_visited_poi_subcategories = None
+        if experiment_to_run == 'test_uniform_proportion_of_full_reopening':
+            # need to match visits lost from max capacity clipping experiments
+            msa2proportions = get_uniform_proportions_per_msa(
+                min_timestring=min_timestring_to_load_best_fit_models_from_grid_search)
+        else:
+            msa2proportions = None
+
         for row in data_kwargs:
             msa_t0 = time.time()
             msa_name = row['MSA_name']
@@ -1372,9 +1428,7 @@ def generate_data_and_model_configs(msas_to_fit=10,
 
                 elif experiment_to_run == 'test_uniform_proportion_of_full_reopening':
                     # FUTURE EXPERIMENTS: test uniform reopening on all pois, simple proportion of pre-lockdown activity
-#                     for alpha in np.arange(.3, 1.1, .1):
-                    for alpha in [0.33642712, 0.5808353,  0.74184458, 0.84413189, 0.90962649, 0.94937783,
- 0.97398732, 0.98820494, 0.99600274, 1.        ]:
+                    for alpha in msa2proportions[msa_name]:
                         kwarg_copy = copy.deepcopy(kwargs_i) # don't modify by mistake in pass-by-reference.
                         counterfactual_poi_opening_experiment_kwargs = {
                                                'extra_weeks_to_simulate':4,
@@ -1436,17 +1490,18 @@ def generate_data_and_model_configs(msas_to_fit=10,
                                         'just_compute_r0':'calibrate_r0' in experiment_to_run,
                                       },
                                      'model_init_kwargs':{
-                                         'num_seeds':num_seeds
+                                         'num_seeds':num_seeds,
                                      },
                                      'simulation_kwargs':{
                                          'use_aggregate_mobility':'aggregate_mobility' in experiment_to_run,
+                                         'use_home_proportion_beta':'home_proportion_beta' in experiment_to_run,
                                      },
                                      'poi_attributes_to_clip':{
                                          'clip_areas':True,
                                          'clip_dwell_times':True,
                                          'clip_visits':True
                                      },
-                                     'include_cbg_prop_out':False, # not needed bc we're using preloading IPF output
+                                     'include_cbg_prop_out':'home_proportion_beta' in experiment_to_run,
                                     })
 
         list_of_data_and_model_kwargs = [{'data_kwargs':copy.deepcopy(a), 'model_kwargs':copy.deepcopy(b), 'experiment_to_run':experiment_to_run} for b in model_kwargs for a in data_kwargs]
@@ -1477,7 +1532,7 @@ def generate_data_and_model_configs(msas_to_fit=10,
 
 def get_list_of_poi_subcategories_with_most_visits(n_poi_categories, n_chunks=5, return_df_without_filtering_or_sorting=False):
     """
-    Remove blacklisted categories and return n_poi_categories subcategories with the most visits in "normal times" (Jan 2019 - Feb 2020)
+    Return n_poi_categories subcategories with the most visits in "normal times" (Jan 2019 - Feb 2020)
     """
     normal_times = helper.list_datetimes_in_range(datetime.datetime(2019, 1, 1),
                                               datetime.datetime(2020, 2, 29))
@@ -1493,13 +1548,12 @@ def get_list_of_poi_subcategories_with_most_visits(n_poi_categories, n_chunks=5,
         grouped_d['% visits'] = 100 * grouped_d['N visits'] / grouped_d['N visits'].sum()
         grouped_d['Category'] = grouped_d['Original Name'].map(lambda x:SUBCATEGORIES_TO_PRETTY_NAMES[x] if x in SUBCATEGORIES_TO_PRETTY_NAMES else x)
         grouped_d = grouped_d.sort_values(by='% visits')[::-1].head(n=n_poi_categories)[['Category', '% visits', '% POIs', 'N visits', 'N POIs']]
-        print('Percent of POIs: %2.3f; percent of visits: %2.3f' % 
-              (grouped_d['% POIs'].sum(), 
+        print('Percent of POIs: %2.3f; percent of visits: %2.3f' %
+              (grouped_d['% POIs'].sum(),
                grouped_d['% visits'].sum()))
-        return grouped_d      
-    assert all([a in d['sub_category'].values for a in SUBCATEGORY_BLACKLIST])
+        return grouped_d
     assert((d.groupby('sub_category')['top_category'].nunique().values == 1).all()) # Make sure that each sub_category only maps to one top category (and so it's safe to just look at sub categories).
-    d = d.loc[d['sub_category'].map(lambda x:x not in SUBCATEGORY_BLACKLIST)]
+    d = d.loc[d['sub_category'].map(lambda x:x not in REMOVED_SUBCATEGORIES)]
     grouped_d = d.groupby('sub_category')['visits_in_normal_times'].sum().sort_values()[::-1].iloc[:n_poi_categories]
     print("Returning the list of %i POI subcategories with the most visits, collectively accounting for percentage %2.1f%% of visits" %
         (n_poi_categories, 100*grouped_d.values.sum()/d['visits_in_normal_times'].sum()))
@@ -1715,19 +1769,29 @@ def plot_slir_over_time(mdl,
             if timesteps_to_plot is not None:
                 x = x[:timesteps_to_plot]
                 mean_Y = mean_Y[:timesteps_to_plot]
+                lower_CI_Y = lower_CI_Y[:timesteps_to_plot]
+                upper_CI_Y = upper_CI_Y[:timesteps_to_plot]
 
-            ax.plot(x, mean_Y, label='%s, %s (n CBGs=%i)' % (k, group, n_cbgs), color=color, linestyle=linestyle)
+            states_to_legend_labels = {'latent':'E (exposed)',
+                                        'infected':'I (infectious)',
+                                        'removed':'R (removed)',
+                                        'susceptible':'S (susceptible)',
+                                        'L+I+R':'E+I+R'}
+            if group != 'all':
+                ax.plot(x, mean_Y, label='%s, %s' % (states_to_legend_labels[k], group), color=color, linestyle=linestyle)
+            else:
+                ax.plot(x, mean_Y, label='%s' % (states_to_legend_labels[k]), color=color, linestyle=linestyle)
             ax.fill_between(x, lower_CI_Y, upper_CI_Y, color=color, alpha=.2)
 
             if plot_logarithmic:
                 ax.set_yscale('log')
 
             lines_to_return['%s, %s' % (k, group)] = mean_Y
-    ax.legend() # Removed for now because we need to handle multiple labels
+    ax.legend(fontsize=16) # Removed for now because we need to handle multiple labels
     logarithmic_string = ' (logarithmic)' if plot_logarithmic else ''
-    ax.set_xlabel('Time (in days)')
-    ax.set_ylabel("Fraction of population%s" % logarithmic_string)
-    ax.set_xticks(range(math.ceil(max(time_in_days)) + 1))
+    ax.set_xlabel('Time (in days)', fontsize=16)
+    ax.set_ylabel("Fraction of population%s" % logarithmic_string, fontsize=16)
+    ax.set_xticks(range(0, math.ceil(max(time_in_days)) + 1, 7))
     plt.xlim(0, math.ceil(max(time_in_days)))
     if plot_logarithmic:
         ax.set_ylim([1e-6, 1])
@@ -1989,11 +2053,11 @@ def compare_model_vs_real_num_cases(nyt_outcomes,
                                     model_line_label=None,
                                     true_line_label=None,
                                     x_interval=None,
-                                    smooth_daily_cases_when_plotting=False,
+                                    add_smoothed_real_data_line=True,
                                     title_fontsize=20,
                                     legend_fontsize=16,
                                     tick_label_fontsize=16,
-                                    marker_size=2,
+                                    marker_size=5,
                                     plot_legend=True,
                                     real_data_color='black',
                                     model_color='darkorchid',
@@ -2092,7 +2156,7 @@ def compare_model_vs_real_num_cases(nyt_outcomes,
                     mdl_hourly_new_deaths = history['nyt']['new_deaths']
                     mdl_prediction = get_cumulative(mdl_hourly_new_deaths)
                     projected_hrs = mdl_hours
-            
+
             if not make_plot:
                 # note: y_pred is also cumulative, but represents seed x day, instead of hour
                 y_true, y_pred, eval_start, eval_end = find_model_and_real_overlap_for_eval(
@@ -2109,7 +2173,7 @@ def compare_model_vs_real_num_cases(nyt_outcomes,
 
                     # the following checks are to deal with converting a cumulative curve back to a daily
                     # curve when the eval starts past the first day, which means the first entry in the
-                    # cumulative curve already an accumulation from multiple days, so we need to subtract
+                    # cumulative curve is already an accumulation from multiple days, so we need to subtract
                     # the cumulative value from the previous day
                     if eval_start > real_dates[0]:
                         eval_start_index = real_dates.index(eval_start)
@@ -2126,9 +2190,6 @@ def compare_model_vs_real_num_cases(nyt_outcomes,
                     if prediction_mode == 'deterministic':  # LL metrics assume constant delay and rate for predictions
                         threshold_metrics = [
                             'MRE',
-                            'gaussianish_negative_ll',
-                            'NLL_with_var_y',
-                            'NLL_with_var_ysq',
                             'poisson_NLL']
                         rate = detection_rate if mode == 'cases' else death_rate
                         for threshold_metric in threshold_metrics:
@@ -2169,8 +2230,6 @@ def compare_model_vs_real_num_cases(nyt_outcomes,
                 mdl_prediction = np.array(new_mdl_prediction).T
                 mdl_prediction = get_daily_from_cumulative(mdl_prediction)
                 real_data = get_daily_from_cumulative(real_data)
-                if smooth_daily_cases_when_plotting:
-                    real_data = apply_smoothing(real_data)
 
             num_seeds, _ = mdl_prediction.shape
             if num_seeds > 1:
@@ -2185,13 +2244,19 @@ def compare_model_vs_real_num_cases(nyt_outcomes,
                 model_line_label = 'modeled %s %s' % (daily_or_cumulative_string, mode)
             if true_line_label is None:
                 true_line_label = 'true %s %s' % (daily_or_cumulative_string, mode)
-            ax.plot_date(projected_hrs, mean, linestyle='-', label=model_line_label, c=model_color, markersize=marker_size)
+            ax.plot_date(projected_hrs, mean, linestyle='-', label=model_line_label, c=model_color,
+                         markersize=marker_size)
             if plot_real_data:
-                if plot_daily_not_cumulative and not smooth_daily_cases_when_plotting:
+                if plot_daily_not_cumulative:
                     # use non-connected x's if plotting non-smoothed daily cases / deaths
-                    ax.plot_date(real_dates, real_data, label=true_line_label, marker='x', c=real_data_color, markersize=marker_size+1, markeredgewidth=2)
-                else:
-                    ax.plot_date(real_dates, real_data, linestyle='-', label=true_line_label, c=real_data_color, markersize=marker_size)
+                    if add_smoothed_real_data_line:
+                        smoothed_real_data = apply_smoothing(real_data, before=3, after=3)
+                        ax.plot_date(real_dates, smoothed_real_data, linestyle='-',
+                                     label=true_line_label, c=real_data_color, markersize=marker_size)
+                        ax.plot_date(real_dates, real_data, marker='x', c='grey', alpha=0.8,
+                                     markersize=marker_size+1, markeredgewidth=2)
+                    else:
+                        ax.plot_date(real_dates, real_data, label=true_line_label, marker='x', c=real_data_color, markersize=marker_size+1, markeredgewidth=2)
             if num_seeds > 1 and plot_errorbars:
                 ax.fill_between(projected_hrs, lower_CI, upper_CI, alpha=.5, color=model_color)
 
@@ -2256,7 +2321,6 @@ def draw_cases_and_deaths_from_exponential_distribution(model_IR, detection_rate
     # model_IR should be a matrix of seed x hour, where each entry represents the *cumulative* number
     # of people in infectious or removed for that seed and hour
     # eg mdl_IR = (model.history['nyt']['infected'] + model.history['nyt']['removed'])
-#     print('Making stochastic predictions: drawing number of days for onset-to-reporting from Exp(%.3f) and onset-to-death from Exp(%.3f)' % (detection_lag_in_days, death_lag_in_days))
     np.random.seed(random_seed)
     detection_lag = detection_lag_in_days * 24  # want the lags in hours
     death_lag = death_lag_in_days * 24
@@ -2289,9 +2353,6 @@ def draw_cases_and_deaths_from_gamma_distribution(model_IR, detection_rate, deat
     # model_IR should be a matrix of seed x hour, where each entry represents the *cumulative* number
     # of people in infectious or removed for that seed and hour
     # eg mdl_IR = (model.history['nyt']['infected'] + model.history['nyt']['removed'])
-#     print('Making stochastic predictions: drawing number of days for onset-to-reporting from Gamma(%.3f, %.3f) [mean=%.3f] and onset-to-death from Gamma(%.3f, %.3f) [mean=%.3f]' %
-#           (detection_delay_shape, detection_delay_scale, detection_delay_shape*detection_delay_scale,
-#            death_delay_shape, death_delay_scale, death_delay_shape*death_delay_scale))
     np.random.seed(random_seed)
     num_seeds, num_hours = model_IR.shape
     assert num_hours % 24 == 0
@@ -2333,7 +2394,7 @@ def compute_loss(y_true, y_pred, rate=None,
     y_true: 1D array, the true case/death counts
     y_pred: 2D array, the predicted case/death counts over all seeds
     rate: the detection or death rate used in computing y_pred;
-          only required when metric is poisson_NLL or binomial_NLL
+          only required when metric is poisson_NLL
     metric: RMSE or MRE, the loss metric
     min_threshold: the minimum number of true case/deaths that a day must have
                    to be included in eval
@@ -2345,23 +2406,14 @@ def compute_loss(y_true, y_pred, rate=None,
         'RMSE',
         'MRE',
         'MSE',
-        'gaussianish_negative_ll',
-        'NLL_with_var_y',
-        'NLL_with_var_ysq',
-        'poisson_NLL',
-        'binomial_NLL'}
+        'poisson_NLL'}
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
     if compare_daily_not_cumulative:
         y_true = get_daily_from_cumulative(y_true)
         y_pred = get_daily_from_cumulative(y_pred)
     else:
-        assert metric not in [
-            'gaussianish_negative_ll',
-            'NLL_with_var_y',
-            'NLL_with_var_ysq',
-            'poisson_NLL',
-            'binomial_NLL']
+        assert metric not in ['poisson_NLL']
 
     if do_logsumexp:
         sum_or_logsumexp = logsumexp
@@ -2387,32 +2439,10 @@ def compute_loss(y_true, y_pred, rate=None,
         return MRE(y_true=y_true, y_pred=y_pred)
     elif metric == 'MSE':
         return MSE(y_true=y_true, y_pred=y_pred)
-    elif metric == 'gaussianish_negative_ll':
-        return gaussianish_negative_ll(
-            y_true=y_true,
-            y_pred=y_pred,
-            sum_or_logsumexp=sum_or_logsumexp)
-    elif metric == 'NLL_with_var_y':
-        return NLL_with_var_y(
-            y_true=y_true,
-            y_pred=y_pred,
-            sum_or_logsumexp=sum_or_logsumexp)
-    elif metric == 'NLL_with_var_ysq':
-        return NLL_with_var_ysq(
-            y_true=y_true,
-            y_pred=y_pred,
-            sum_or_logsumexp=sum_or_logsumexp)
     elif metric == 'poisson_NLL':
         return poisson_NLL(
             y_true=y_true,
             y_pred=y_pred,
-            sum_or_logsumexp=sum_or_logsumexp)
-    elif metric == 'binomial_NLL':
-        assert rate is not None
-        return binomial_NLL(
-            y_true=y_true,
-            y_pred=y_pred,
-            rate=rate,
             sum_or_logsumexp=sum_or_logsumexp)
 
 def evaluate_all_fitted_models_for_msa(msa_name, min_timestring=None,
@@ -2608,7 +2638,7 @@ if __name__ == '__main__':
     # The other important command line argument is experiment_to_run, which specifies which step of the experimental pipeline we're running.
     # The worker jobs take additional arguments like timestring (which specifies the timestring we use to save model files)
     # and config_idx, which specifies which config we're using.
-    valid_experiments = ['normal_grid_search', 'calibrate_r0',
+    valid_experiments = ['normal_grid_search', 'calibrate_r0', 'grid_search_home_proportion_beta',
                  'grid_search_aggregate_mobility', 'calibrate_r0_aggregate_mobility',
                  'just_save_ipf_output', 'test_interventions',
                  'test_retrospective_counterfactuals', 'test_max_capacity_clipping',
@@ -2619,7 +2649,7 @@ if __name__ == '__main__':
     parser.add_argument('experiment_to_run', help='The name of the experiment to run')
     parser.add_argument('--timestring', type=str)
     parser.add_argument('--config_idx', type=int)
-    parser.add_argument('--how_to_select_best_grid_search_models', type=str, choices=['daily_cases_rmse', 'daily_deaths_rmse', 'daily_cases_poisson'])
+    parser.add_argument('--how_to_select_best_grid_search_models', type=str, choices=['daily_cases_rmse', 'daily_deaths_rmse', 'daily_cases_poisson'], default='daily_cases_rmse')
     args = parser.parse_args()
 
     # Less frequently used arguments.

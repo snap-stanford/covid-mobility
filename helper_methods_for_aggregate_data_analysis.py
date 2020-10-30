@@ -15,6 +15,7 @@ import geopandas
 import csv
 import os
 from geopandas.tools import sjoin
+import time
 
 # automatically read weekly strings so we don't have to remember to update it each week.
 ALL_WEEKLY_STRINGS = sorted([a.replace('-weekly-patterns.csv.gz', '') for a in os.listdir('/dfs/scratch1/safegraph_homes/all_aggregate_data/weekly_patterns_data/v1/main-file/')])
@@ -357,6 +358,125 @@ def load_patterns_data(month=None, year=None, week_string=None, extra_cols=[], j
     else:
         print("%i rows loaded for week %s" % (len(x), week_string))
     return x
+
+def load_weekly_patterns_v2_data(week_string, cols_to_keep, expand_hourly_visits=True):
+    """
+    Load in Weekly Patterns V2 data for a single week. 
+    If week_string <= '2020-06-15': we are using the earlier version of Weekly Pattern v2 in /weekly_20190101_20200615/, and 
+                                    week_string denotes the first day of the week.
+    Else: we are using the later version of Weekly Patterns v2 in /weekly_20200615_20201005/, and week_string denotes
+          the day this update was released.
+    """
+    ts = time.time()
+    elements = week_string.split('-')
+    assert len(elements) == 3
+    week_datetime = datetime.datetime(int(elements[0]), int(elements[1]), int(elements[2]))
+    cols_to_load = cols_to_keep.copy()
+    must_load_cols = ['date_range_start', 'visits_by_each_hour']  # required for later logic
+    for k in must_load_cols:
+        if k not in cols_to_load:
+            cols_to_load.append(k)
+    
+    if week_string <= '2020-06-15':
+        path_to_csv = os.path.join(CURRENT_DATA_DIR, 'weekly_20190101_20200615/main-file/%s-weekly-patterns.csv.gz' % week_string)
+        assert os.path.isfile(path_to_csv)
+        print('Loading from %s' % path_to_csv)
+        df = load_csv_possibly_with_dask(path_to_csv, use_dask=True, usecols=cols_to_load, dtype={'poi_cbg':'float64'})
+        start_day_string = week_string
+        start_datetime = week_datetime
+    else:
+        path_to_weekly_dir = os.path.join(CURRENT_DATA_DIR, 'weekly_20200615_20201028/patterns/%s/' % week_datetime.strftime('%Y/%m/%d'))
+        inner_folder = os.listdir(path_to_weekly_dir)
+        assert len(inner_folder) == 1  # there is always a single folder inside the weekly folder 
+        path_to_patterns_parts = os.path.join(path_to_weekly_dir, inner_folder[0])
+        dfs = []
+        for filename in sorted(os.listdir(path_to_patterns_parts)):
+            if filename.startswith('patterns-part'):  # e.g., patterns-part1.csv.gz
+                path_to_csv = os.path.join(path_to_patterns_parts, filename)
+                assert os.path.isfile(path_to_csv)
+                print('Loading from %s' % path_to_csv)
+                df = load_csv_possibly_with_dask(path_to_csv, use_dask=True, usecols=cols_to_load, dtype={'poi_cbg':'float64'})
+                dfs.append(df)
+        df = pd.concat(dfs, axis=0)
+        start_day_string = df.iloc[0].date_range_start.split('T')[0]
+        elements = start_day_string.split('-')
+        assert len(elements) == 3
+        start_datetime = datetime.datetime(int(elements[0]), int(elements[1]), int(elements[2]))
+    assert df['date_range_start'].map(lambda x:x.startswith(start_day_string + 'T00:00:00')).all()  # make sure date range starts where we expect for all rows.     
+    
+    if expand_hourly_visits:     # expand single hourly visits column into one column per hour
+        df['visits_by_each_hour'] = df['visits_by_each_hour'].map(json.loads) # convert string lists to lists.
+        all_dates = [start_datetime + datetime.timedelta(days=i) for i in range(7)]  # all days in the week
+        hours = pd.DataFrame(df['visits_by_each_hour'].values.tolist(),
+                     columns=[f'hourly_visits_%i.%i.%i.%i' % (date.year, date.month, date.day, hour)
+                              for date in all_dates
+                              for hour in range(0, 24)])
+        assert len(hours) == len(df)
+        hours.index = df.index
+        df = pd.concat([df, hours], axis=1)
+        # The hourly data has some spurious spikes
+        # related to the GMT-day boundary which we have to correct for.
+        df['offset_from_gmt'] = df['date_range_start'].map(lambda x:x[len(start_day_string + 'T00:00:00'):])
+        print("Offset from GMT value counts")
+        offset_counts = df['offset_from_gmt'].value_counts()
+        print(offset_counts)
+        hourly_offset_strings = offset_counts[:4].index  # four most common timezones across POIs
+        assert all(['-0%i:00' % x in hourly_offset_strings for x in [5, 6, 7]])  # should always include GMT-5, -6, -7
+        assert ('-04:00' in hourly_offset_strings) or ('-08:00' in hourly_offset_strings)  # depends on DST 
+        percent_rows_being_corrected = (df['offset_from_gmt'].map(lambda x:x in hourly_offset_strings).mean() * 100)
+        print("%2.3f%% of rows have timezones that we spike-correct for." % percent_rows_being_corrected) 
+        assert percent_rows_being_corrected > 98  # almost all rows should fall in these timezones
+        end_datetime = datetime.datetime(all_dates[-1].year, all_dates[-1].month, all_dates[-1].day, 23)
+        # have to correct for each timezone separately.
+        for offset_string in sorted(hourly_offset_strings):
+            print('Correcting GMT%s...' % offset_string)
+            idxs = df['offset_from_gmt'] == offset_string
+            offset_int = int(offset_string.split(':')[0])
+            assert (-8 <= offset_int) and (offset_int <= -4)
+            for date in all_dates:
+                # not totally clear which hours are messed up - it's mainly one hour, but the surrounding ones 
+                # look weird too - but this yields plots which look reasonable.
+                for hour_to_correct in [24 + offset_int - 1,
+                                        24 + offset_int,
+                                        24 + offset_int + 1]:
+                    # interpolate using hours fairly far from hour_to_correct to avoid pollution.
+                    dt_hour_to_correct = datetime.datetime(date.year, date.month, date.day, hour_to_correct)
+                    start_hour = max(start_datetime, dt_hour_to_correct + datetime.timedelta(hours=-3))
+                    end_hour = min(end_datetime, dt_hour_to_correct + datetime.timedelta(hours=3))
+                    cols_to_use = [f'hourly_visits_%i.%i.%i.%i' % (dt.year, dt.month, dt.day, dt.hour) for dt in list_hours_in_range(start_hour, end_hour)]
+                    assert all([col in df.columns for col in cols_to_use])
+                    # this technically overlaps with earlier hours, but it should be okay because they will 
+                    # already have been corrected. 
+                    df.loc[idxs, 'hourly_visits_%i.%i.%i.%i' % (date.year, date.month, date.day, hour_to_correct)] = df.loc[idxs, cols_to_use].mean(axis=1)             
+    
+    non_required_cols = [col for col in df.columns if not(col in cols_to_keep or col.startswith('hourly_visits_'))]
+    df = df.drop(columns=non_required_cols)
+    df = df.set_index('safegraph_place_id')
+    te = time.time()
+    print("%i rows loaded for week %s [total time = %.2fs]" % (len(df), start_day_string, te-ts))
+    return df
+
+def load_core_places_footprint_data(cols_to_keep):
+    area_csv = os.path.join(CURRENT_DATA_DIR, 'core_places_footprint/August2020Release/SafeGraphPlacesGeoSupplementSquareFeet.csv.gz')
+    print('Loading', area_csv)
+    df = load_csv_possibly_with_dask(area_csv, usecols=cols_to_keep, use_dask=True)
+    df = df.set_index('safegraph_place_id')
+    print('Loaded core places footprint data for %d POIs' % len(df))
+    return df
+
+def load_core_places_data(cols_to_keep):
+    core_dir = os.path.join(CURRENT_DATA_DIR, 'core_places/2020/10/')  # use the most recent core info
+    dfs = []
+    for filename in sorted(os.listdir(core_dir)):
+        if filename.startswith('core_poi-part'):
+            path_to_csv = os.path.join(core_dir, filename)
+            print('Loading', path_to_csv)
+            df = load_csv_possibly_with_dask(path_to_csv, usecols=cols_to_keep, use_dask=True)
+            dfs.append(df)
+    df = pd.concat(dfs, axis=0)
+    df = df.set_index('safegraph_place_id')
+    print('Loading core places info for %d POIs' % len(df))
+    return df
 
 def load_google_mobility_data(only_US=True):
     df = pd.read_csv(PATH_TO_GOOGLE_DATA)

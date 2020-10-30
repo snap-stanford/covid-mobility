@@ -5,7 +5,7 @@ and informs reopening strategies](https://www.medrxiv.org/content/10.1101/2020.0
 
 ## Regenerating results
 
-1. **Setting up virtualenv**. Our code is run in a conda environment. You can set up this environment by running `conda env create --prefix YOUR_PATH_HERE --file safegraph_env_v3.yml`. Once you have set up the environment, activate it prior to running any code by running `source YOUR_PATH_HERE/bin/activate`. 
+1. **Setting up virtualenv**. Our code is run in a conda environment, with all analysis performed on a Linux Ubuntu system. You can set up this environment by running `conda env create --prefix YOUR_PATH_HERE --file safegraph_env_v3.yml`. Once you have set up the environment, activate it prior to running any code by running `source YOUR_PATH_HERE/bin/activate`. 
 
 2. **Downloading datasets**.
 
@@ -39,11 +39,9 @@ and informs reopening strategies](https://www.medrxiv.org/content/10.1101/2020.0
 
 **helper_methods_for_aggregate_data_analysis.py**: Various helper methods used in data processing and throughout the analysis. 
 
-**disease_model.py**: Implements SEIR disease model that can integrate network mobility data.
+**disease_model.py**: Implements the disease model on the mobility network. 
 
 **model_experiments.py**: Runs models for the experiments described in the paper. 
-
-**model_results.py**: Once the models have been run, analyzes results from simulations.
 
 **process_safegraph_data.ipynb**: Processes the raw SafeGraph data. 
 

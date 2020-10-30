@@ -43,18 +43,20 @@ import random
 from dask.diagnostics import ProgressBar
 import dask.dataframe as dd
 
-# SafeGraph data: raw and processed
+# in old base dir (scratch1)
 BASE_DIR = '/dfs/scratch1/safegraph_homes/'
 UNZIPPED_DATA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/20191213-safegraph-aggregate-longitudinal-data-to-unzip-to/')
 ANNOTATED_H5_DATA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/chunks_with_demographic_annotations/')
 CHUNK_FILENAME = 'chunk_1.2017-3.2020_c2.h5'
 STRATIFIED_BY_AREA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/chunks_with_demographic_annotations_stratified_by_area/')
 PATH_TO_SAFEGRAPH_AREAS = os.path.join(BASE_DIR, 'all_aggregate_data/safegraph_poi_area_calculations/SafeGraphPlacesGeoSupplementSquareFeet.csv.gz')
-
-# saved output from model fitting
 PATH_TO_IPF_OUTPUT = os.path.join(BASE_DIR, 'all_aggregate_data/ipf_output/')
-FITTED_MODEL_DIR = '/dfs/scratch2/extra_safegraph_aggregate_models/'
 OLD_FITTED_MODEL_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/fitted_models/')
+
+# in new base dir
+NEW_BASE_DIR = '/dfs/scratch2/second_safegraph_homes/'
+FITTED_MODEL_DIR = os.path.join(NEW_BASE_DIR, 'extra_safegraph_aggregate_models/')
+CURRENT_DATA_DIR = os.path.join(NEW_BASE_DIR, 'all_aggregate_data/20201028_download/')  # most recent data download
 
 # supplementary datasets: census, geographical, NYT, Google
 PATH_TO_ACS_1YR_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/2018_one_year_acs_population_data/nhgis0001_ds239_20185_2018_blck_grp.csv')
@@ -278,7 +280,7 @@ MSAS_TO_STATE_CBG_FILES = {'Washington_Arlington_Alexandria_DC_VA_MD_WV':['ACS_2
 
 # in analysis, we remove same categories as MIT sloan paper, or try to. They write:
 # We omit “Bars and Clubs” as SafeGraph seems to dramatically undercount these locations. We omit “Parks and Playgrounds” as SafeGraph struggles to precisely define the bor- ders of these irregularly shaped points of interest. We omit “Public and Private Schools” and “Child Care and Daycare Centers” due to challenges in adjusting for the fact that individuals under the age of 13 are not well tracked by SafeGraph.
-SUBCATEGORY_BLACKLIST = ['Child Day Care Services',
+REMOVED_SUBCATEGORIES = ['Child Day Care Services',
 'Elementary and Secondary Schools',
 'Drinking Places (Alcoholic Beverages)',
 'Nature Parks and Other Similar Institutions',
@@ -447,14 +449,17 @@ def reformat_large_tick_values(tick_val, pos):
     if tick_val >= 1000000000:
         val = round(tick_val/1000000000, 1)
         postfix = 'B'
-    elif tick_val >= 1000000:
+    elif tick_val >= 10000000:  # if over 10M, don't include decimal
+        val = int(round(tick_val/1000000, 0))
+        postfix = 'M'
+    elif tick_val >= 1000000:  # if 1M-10M, include decimal
         val = round(tick_val/1000000, 1)
         postfix = 'M'
     elif tick_val >= 1000:
         val = int(round(tick_val/1000, 0))
         postfix = 'k'
     else:
-        val = tick_val
+        val = int(tick_val)
         postfix = ''
     new_tick_format = '%s%s' % (val, postfix)
     return new_tick_format

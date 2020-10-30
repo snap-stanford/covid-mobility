@@ -233,7 +233,7 @@ def plot_best_models_fit_for_all_msas(df, df_str, train_test_partition, key_to_s
                 'plot_daily_not_cumulative':plot_daily_not_cumulative,
                 'plot_mode':thing_to_plot,
                 'title_fontsize':20,
-                'marker_size':5,
+                'marker_size':4,
                 'model_line_label': model_line_label,
                 'true_line_label': true_line_label,
                 'real_data_color':real_data_color,
@@ -392,7 +392,7 @@ def make_schematic(orig_visits, lesser_extent, shifted, colors, ax):
     ax.set_title('Examples of modified mobility data', fontsize=20)
     ax.tick_params(labelsize=16)
 
-def plot_lir_over_time_for_multiple_models(timestrings, ax, label, color):
+def plot_lir_over_time_for_multiple_models(timestrings, ax, label, color, return_CI=False):
     """
     Given a list of timestrings, plot the fraction of people in states L, I, or R over time, 
     along with confidence intervals.
@@ -421,10 +421,12 @@ def plot_lir_over_time_for_multiple_models(timestrings, ax, label, color):
     ax.plot_date(hours, mean, linestyle='-', label=label, color=color)
     ax.fill_between(hours, lower_bound, upper_bound, alpha=0.5, color=color)
     ax.set_xlim([min(hours), max(hours)])
+    if return_CI:
+        return mean, lower_bound, upper_bound
     return mean
 
 def make_counterfactual_line_plots(counterfactual_df, msa, ax, mode,
-                                   cmap_str='viridis', y_lim=None):
+                                   cmap_str='viridis', y_lim=None, return_CI=False):
     assert mode in {'degree', 'shift-later', 'shift-earlier', 'shift'}
     if mode == 'degree':
         colors = list(cm.get_cmap(cmap_str, 5).colors)
@@ -449,13 +451,14 @@ def make_counterfactual_line_plots(counterfactual_df, msa, ax, mode,
     msa_df = counterfactual_df[counterfactual_df['MSA_name'] == msa]
     color_idx = 0
     means = []
+    lower_bounds = []
+    upper_bounds = []
     for i, val in enumerate(values):
         if np.isnan(val):
             # plot the best-fit models for comparison. counterfactual_baseline_model provides the timestrings of the best-fit models to actual data.
             timestrings = msa_df.counterfactual_baseline_model.unique()
             label = 'actual' if mode == 'degree' else '0 days (actual)'
-            mean = plot_lir_over_time_for_multiple_models(timestrings, ax, label, 'black')
-            means.append(mean)
+            mean, lower_bound, upper_bound = plot_lir_over_time_for_multiple_models(timestrings, ax, label, 'black', return_CI=True)
         else:
             # plot the models from this experiment
             msa_val_df = msa_df[msa_df[param_name] == val]
@@ -465,8 +468,10 @@ def make_counterfactual_line_plots(counterfactual_df, msa, ax, mode,
             else:  # mode is some kind of shift
                 postfix = 'earlier' if val < 0 else 'later'
                 label = '%d days %s' % (abs(val), postfix)  # take abs value in case val is negative
-            mean = plot_lir_over_time_for_multiple_models(timestrings, ax, label, colors[i])
-            means.append(mean)
+            mean, lower_bound, upper_bound = plot_lir_over_time_for_multiple_models(timestrings, ax, label, colors[i], return_CI=True)
+        means.append(mean)
+        lower_bounds.append(lower_bound)
+        upper_bounds.append(upper_bound)
 
     ax.legend(loc='upper left', fontsize=16)
     ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=mdates.SU, interval=2))
@@ -479,6 +484,8 @@ def make_counterfactual_line_plots(counterfactual_df, msa, ax, mode,
     ax.grid(alpha=.5)
     ax.tick_params(labelsize=16)
     ax.set_title(subtitle, fontsize=20)
+    if return_CI:
+        return means, lower_bounds, upper_bounds, colors[:len(means)]
     return means, colors[:len(means)]
 
 def get_final_LIR_fraction_for_multiple_models(timestrings):
@@ -589,7 +596,10 @@ def make_superspreader_plot_for_msa(df, msa, ax, plot_log=False, set_labels=True
                                 mdl.history['all']['new_cases'].sum(axis=1)))
         min_datestring = kwargs['model_kwargs']['min_datetime'].strftime('%B %-d')
         max_datestring = kwargs['model_kwargs']['max_datetime'].strftime('%B %-d')
-        all_poi_counts_for_city.append(mdl.history['all']['num_cases_per_poi'])
+        num_cases_per_poi = mdl.history['all']['num_cases_per_poi']
+        if len(num_cases_per_poi.shape) == 3:  # seed x poi x time
+            num_cases_per_poi = np.sum(num_cases_per_poi, axis=2)  # sum over time
+        all_poi_counts_for_city.append(num_cases_per_poi)
         if len(all_poi_counts_for_city) > 1:
             assert all_poi_counts_for_city[-1].shape == all_poi_counts_for_city[-2].shape
 
@@ -619,10 +629,12 @@ def make_superspreader_plot_for_msa(df, msa, ax, plot_log=False, set_labels=True
         ax.set_xscale('log')
         ax.set_yscale('log')
     else:
-        ax.set_xticks(np.arange(0.0, 1.01, .1))
-        ax.set_xticklabels(['0%', '10%', '20%', '30%', '40%', '50%', '60%', '70%', '80%', '90%', '100%'])
-        ax.set_yticks(np.arange(0.0, 1.01, .1))
-        ax.set_yticklabels(['0%', '10%', '20%', '30%', '40%', '50%', '60%', '70%', '80%', '90%', '100%'])
+        ticks = np.arange(0.0, 1.01, .1)
+        ax.set_xticks(ticks)
+        ax.set_yticks(ticks)
+        tick_labels = ['%d%%' % (t * 100) for t in ticks]
+        ax.set_xticklabels(tick_labels)
+        ax.set_yticklabels(tick_labels)
     ax.grid(alpha=.3)
     ax.tick_params(labelsize=16)
     if set_labels:
@@ -652,53 +664,6 @@ def make_superspreader_plot_for_msa(df, msa, ax, plot_log=False, set_labels=True
         print(poi_characteristics_df.corr(method='spearman')['mean_frac_of_infections_at_poi'])
         print(poi_characteristics_df.groupby('infectiousness_group').median().transpose()[['bottom 90%', 'top 10%']])
     return prop_from_pois_df, all_poi_fracs_for_city
-
-def get_full_activity_num_visits(msa, intervention_datetime, extra_weeks_to_simulate, min_datetime, max_datetime):
-    """
-    Get the total number of visits post-intervention date assuming we just looped activity from the first week
-    """
-    fn = get_ipf_filename(msa, min_datetime, max_datetime, True, True)
-    f = open(fn, 'rb')
-    poi_cbg_visits_list = pickle.load(f)
-    f.close()
-    all_hours = helper.list_hours_in_range(min_datetime, max_datetime + datetime.timedelta(hours=168 * extra_weeks_to_simulate))
-    assert(intervention_datetime in all_hours)
-    intervention_hour_idx = all_hours.index(intervention_datetime)
-    full_total = 0
-    for t in range(intervention_hour_idx, len(all_hours)):
-        full_activity_matrix = poi_cbg_visits_list[t % 168]
-        full_total += full_activity_matrix.sum()
-    return full_total, intervention_hour_idx
-
-def get_lir_checkpoints_and_prop_visits_lost(timestring, intervention_hour_idx, 
-                                             full_activity_num_visits=None, group='all'):
-    """
-    Returns the fraction of the population in state L+I+R at two checkpoints: at the point of reopening,
-    and at the end of the simulation. Also returns the proportion of visits lost after the reopening,
-    compared to full reopening.
-    """
-    model, kwargs, _, _, fast_to_load_results = load_model_and_data_from_timestring(timestring, 
-                                                                 load_fast_results_only=False,
-                                                                 load_full_model=True)
-    group_history = model.history[group]
-    lir = group_history['latent'] + group_history['infected'] + group_history['removed']
-    pop_size = group_history['total_pop']
-    intervention_lir = lir[:, intervention_hour_idx] / pop_size
-    final_lir = lir[:, -1] / pop_size
-    intervention_cost = fast_to_load_results['intervention_cost']
-    if 'total_activity_after_max_capacity_capping' in intervention_cost:
-        # the max_capacity_capping and uniform reduction experiments save different activity measures
-        # the max_capacity_capping expeirments save 'total_activity_after_max_capacity_capping'
-        # which needs to be translated into prop visits lost
-        # the uniform reduction experiments save 'overall_cost' which is the percentage of visits lost
-        # so it needs to be divided by 100 to be a decimal
-        assert full_activity_num_visits is not None
-        num_visits = intervention_cost['total_activity_after_max_capacity_capping']
-        visits_lost = (full_activity_num_visits - num_visits) / full_activity_num_visits
-    else:
-        assert 'overall_cost' in intervention_cost
-        visits_lost = intervention_cost['overall_cost'] / 100
-    return intervention_lir, final_lir, visits_lost
 
 def get_pareto_curve(results_df, msa, param_name, intervention_idx, get_diff_in_infections,
                      full_activity_num_visits=None, cbg_group='all'):
@@ -743,7 +708,7 @@ def get_pareto_curve(results_df, msa, param_name, intervention_idx, get_diff_in_
 
 def make_pareto_plot(X, Y_min, Y_mean, Y_max, ax, all_intervention_lir=None,
                      color=None, point_labels=None, annotation_color=None,
-                     line_label=None, set_axis_labels=True):    
+                     line_label=None, set_axis_labels=True, return_data=False, xytext_offset=(0,5)):    
     """
     Plots the pareto curve. Most of the kwargs just control various aspects of plot appearance.
     """
@@ -756,7 +721,7 @@ def make_pareto_plot(X, Y_min, Y_mean, Y_max, ax, all_intervention_lir=None,
         assert annotation_color is not None
         for val, x, y in zip(point_labels, X, Y_mean):
             if val < .8:
-                ax.annotate('%d%%' % (100 * val), xy=(x, y), xytext=(0, 5), textcoords='offset pixels', fontsize=16, color=annotation_color)
+                ax.annotate('%d%%' % (100 * val), xy=(x, y), xytext=xytext_offset, textcoords='offset pixels', fontsize=16, color=annotation_color)
     
     # plot the average num infections at the point of reopening
     if all_intervention_lir is not None:  
@@ -773,11 +738,15 @@ def make_pareto_plot(X, Y_min, Y_mean, Y_max, ax, all_intervention_lir=None,
         ax.set_title('Capping hourly visits at x% of\nPOI maximum occupancy', fontsize=20)
         ax.legend(fontsize=16)
     ax.grid(alpha=.3)
+    if np.max(X) > 1000:
+        ax.xaxis.set_major_formatter(tick.FuncFormatter(reformat_large_tick_values))
     ax.tick_params(labelsize=16)
+    if return_data:
+        return point_labels, X, Y_mean, Y_min, Y_max
 
 def plot_pairwise_comparison(max_cap_df, uniform_df, msa_name, full_activity_num_visits, intervention_idx,
                              ax, cbg_group='all', mode='ratio', color='slategrey', line_label=None, x_lim=None,
-                             set_axis_labels=True):
+                             yticks=None, set_axis_labels=True):
     """
     Plots the pairwise comparison between two partial reopening experiments: clipping and uniform reduction.
     They are compared on the basis of the number of infections gained post-reopening, and may be compared 
@@ -798,7 +767,7 @@ def plot_pairwise_comparison(max_cap_df, uniform_df, msa_name, full_activity_num
     Y_upper = []  # upper-bound on CI for comparison
     for mc_val, u_val in zip(max_cap_vals, uniform_vals):
         # each pair of mc_val, u_val [which evaluate one max capacity and one uniform reduction policy, respectively] should be matched on proportion of visits lost. 
-        print('Comparing max_cap_alpha=%.2f to full_activity_alpha=%.2f' % (mc_val, u_val))
+        print('Comparing max_cap_alpha=%.2f to full_activity_alpha=%.4f' % (mc_val, u_val))
         mc_subdf = msa_mc_df[msa_mc_df['counterfactual_max_capacity_alpha'] == mc_val]
         u_subdf = msa_u_df[msa_u_df['counterfactual_full_activity_alpha'] == u_val]
         mc_all_lir = []
@@ -843,6 +812,9 @@ def plot_pairwise_comparison(max_cap_df, uniform_df, msa_name, full_activity_num
     ax.fill_between(X, Y_lower, Y_upper, alpha=0.2, color=color)
     if x_lim is not None:
         ax.set_xlim(x_lim)
+    if yticks is not None:
+        ax.set_ylim((np.min(yticks), np.max(yticks)))
+        ax.set_yticks(yticks)
     if mode == 'ratio':
         ax.plot([min(X), max(X)], [1, 1], color='grey', linestyle='--')
         ylabel = 'Ratio of new infections'
@@ -1075,7 +1047,7 @@ def make_boxplot_of_poi_reopening_effects(intervention_df, msa_names, poi_and_cb
         if filename is not None:
             plt.savefig(filename, bbox_inches='tight')
     else:
-        fig, ax = plt.subplots(figsize=(9,7))
+        fig, ax = plt.subplots(figsize=(9.5,7))
         sns.boxplot(y="pretty_cat_names",
                     x="reopening_impact",
                     data=combined_df,
@@ -1105,8 +1077,8 @@ def plot_reopening_effect_by_poi_category_with_disparate_impact(intervention_df,
     intervention_df = intervention_df.copy()
     intervention_df = intervention_df.loc[intervention_df['counterfactual_sub_category'].map(lambda x:x in cats_to_plot)]
     intervention_df['mean_final_infected_fraction'] = intervention_df['final infected fraction'].map(lambda x:np.mean(x))
-    assert len([a for a in SUBCATEGORY_BLACKLIST if a in intervention_df['counterfactual_sub_category'].values]) == 0
-    intervention_df = intervention_df.loc[intervention_df['counterfactual_sub_category'].map(lambda x:x not in SUBCATEGORY_BLACKLIST)]
+    assert len([a for a in REMOVED_SUBCATEGORIES if a in intervention_df['counterfactual_sub_category'].values]) == 0
+    intervention_df = intervention_df.loc[intervention_df['counterfactual_sub_category'].map(lambda x:x not in REMOVED_SUBCATEGORIES)]
     intervention_df['pretty_cat_names'] = intervention_df['counterfactual_sub_category'].map(lambda x:SUBCATEGORIES_TO_PRETTY_NAMES[x] if x in SUBCATEGORIES_TO_PRETTY_NAMES else x)
     full_reopen_df = intervention_df.loc[intervention_df['counterfactual_alpha'] == 1]
     full_close_df = intervention_df.loc[intervention_df['counterfactual_alpha'] == 0]
@@ -1575,11 +1547,13 @@ def get_frac_infections_at_each_category_for_groups(timestring, groups, categori
     model, _, _, _, fast_to_load_results = load_model_and_data_from_timestring(timestring,
                                                                                load_fast_results_only=False,
                                                                                load_full_model=True)
+    assert all([group in model.history for group in groups])
     group2fracs = {group:[] for group in groups}
     for group in groups:
+        assert 'num_cases_per_poi' in model.history[group]  # doesn't always exist, we specify during experiment which
+        # groups we want to track num_cases_per_poi for, since tracking this is expensive in terms of space
         num_cases_per_poi = model.history[group]['num_cases_per_poi']
-        n_seeds, n_pois = num_cases_per_poi.shape
-        assert n_pois == len(poi_categories)
+        n_seeds = num_cases_per_poi.shape[0]
         pop_size = model.history[group]['total_pop']
         for s in range(n_seeds):
             frac_pop_infected = []
@@ -1591,16 +1565,28 @@ def get_frac_infections_at_each_category_for_groups(timestring, groups, categori
     return group2fracs
 
 def plot_frac_infected_per_category_for_multiple_models(results_df, poi_and_cbg_characteristics, msa_name, ax, 
-                                                        categories_to_plot, sort_categories=False):
+                                                        categories_to_plot, sort_categories=False, 
+                                                        comparison='income', return_data=False):
+    assert comparison in {'income', 'race'}
+    if comparison == 'income':
+        group1 = LOWINCOME
+        group2 = HIGHINCOME
+        label1 = 'bottom income decile'
+        label2 = 'top income decile'
+    else:
+        group1 = NONWHITE
+        group2 = WHITE
+        label1 = 'decile with lowest % white'
+        label2 = 'decile with highest % white'
     msa_df = results_df[results_df['MSA_name'] == msa_name]
     poi_categories = poi_and_cbg_characteristics[msa_name]['poi_categories']
     pretty_names = np.array([SUBCATEGORIES_TO_PRETTY_NAMES[x] if x in SUBCATEGORIES_TO_PRETTY_NAMES else x for x in poi_categories])
     bottom_decile_fracs = []  # num_models x num_categories
     top_decile_fracs = []  # num_models x num_categories
     for ts in msa_df.timestring.values:
-        group2fracs = get_frac_infections_at_each_category_for_groups(ts, [LOWINCOME, HIGHINCOME], categories_to_plot, pretty_names)
-        bottom_decile_fracs.extend(group2fracs[LOWINCOME])
-        top_decile_fracs.extend(group2fracs[HIGHINCOME])
+        group2fracs = get_frac_infections_at_each_category_for_groups(ts, [group1, group2], categories_to_plot, pretty_names)
+        bottom_decile_fracs.extend(group2fracs[group1])
+        top_decile_fracs.extend(group2fracs[group2])
 
     print('Num params * seeds:', len(bottom_decile_fracs))
     bottom_decile_fracs = np.array(bottom_decile_fracs)
@@ -1631,8 +1617,13 @@ def plot_frac_infected_per_category_for_multiple_models(results_df, poi_and_cbg_
     curr_lim = ax.get_xlim()
     ax.set_xlim(0, curr_lim[1])
     ax.grid(alpha=.3)
+    if return_data:
+        sorted_idx = np.argsort(-1 * bottom_decile_mean)  # most impactful to least impactful
+        labels = [categories_to_plot[i] for i in sorted_idx]
+        return (labels, bottom_decile_mean[sorted_idx], bottom_decile_min[sorted_idx], bottom_decile_max[sorted_idx], 
+                top_decile_mean[sorted_idx], top_decile_min[sorted_idx], top_decile_max[sorted_idx])
     return labels
-
+    
 def make_mobility_comparison_line_plot(poi_and_cbg_characteristics,
                                        msa_name, min_datetime, max_datetime,
                                        group1, group1_label, group1_color,
@@ -1687,6 +1678,8 @@ def make_category_comparison_scatter_plot(attributes_df_1, attributes_df_2,
     vals_2 = attributes_df_2[attribute_to_plot].values
     visits_2 = attributes_df_2['num_visits_per_capita'].values
     avg_visits = (visits_1 + visits_2) / 2
+    cats_and_visits = list(zip(categories, avg_visits))
+    print('Top 10 categories with most visits:', sorted(cats_and_visits, key=lambda x:x[1], reverse=True)[:10])
 
     X = vals_1
     Y = vals_2
@@ -1770,3 +1763,401 @@ def plot_per_capita_category_visits(poi_and_cbg_characteristics, msa_name,
         ax.set_xlabel('Per capita visits to category', fontsize=18)
         ax.legend(fontsize=16, loc='lower right')
         ax.set_title(MSAS_TO_PRETTY_NAMES[msa_name], fontsize=20)
+
+###################################################################################
+# Functions for supplementary analyses
+###################################################################################
+def plot_hourly_poi_visits(mdl, ax, timesteps_to_plot=None, plot_daily_mean=True):
+    total_poi_visits_by_timestep = mdl.POI_TIME_COUNTS.sum(axis=0)
+    time_in_days = np.arange(len(total_poi_visits_by_timestep))/24. # time in days.
+    hourly_alpha = 1 if not plot_daily_mean else 0.2
+    hourly_color = 'blue' if not plot_daily_mean else 'grey'
+
+    if timesteps_to_plot is not None:
+        ax.plot(time_in_days[:timesteps_to_plot], total_poi_visits_by_timestep[:timesteps_to_plot], label='Hourly visits', alpha=hourly_alpha)
+    else:
+        ax.plot(time_in_days, total_poi_visits_by_timestep, label='Hourly visits', alpha=hourly_alpha)
+    ax.set_xticks(range(0, math.ceil(max(time_in_days)) + 1, 7))
+    ax.set_xlim([0, math.ceil(max(time_in_days))])
+    ax.set_ylim([0, max(total_poi_visits_by_timestep)])
+    ax.set_ylabel("Total visits to POIs", fontsize=16)
+    ax.set_xlabel("Time in days", fontsize=16)
+
+    if plot_daily_mean:
+        smoothed_average = apply_smoothing(total_poi_visits_by_timestep, before=12, after=12)
+        days_to_plot = time_in_days
+        if timesteps_to_plot is not None:
+            smoothed_average = smoothed_average[:timesteps_to_plot]
+            days_to_plot = days_to_plot[:timesteps_to_plot]
+        # don't plot very beginning or very end of the smoothed timeseries because smoothing can be misleading. 
+        start_idx = 12
+        end_idx = len(total_poi_visits_by_timestep) - 12
+        smoothed_average = smoothed_average[start_idx:end_idx]
+        days_to_plot = days_to_plot[start_idx:end_idx]
+
+        ax.plot(days_to_plot, smoothed_average, label='Smoothed average', color='black', linewidth=4)
+        ax.legend(fontsize=16)
+
+    ax.grid(alpha=.5)
+
+def plot_disease_spread_over_time(
+    model,
+    data_and_model_kwargs,
+    cbg_mapper=None,
+    path_to_save=None,
+    timesteps_to_plot=None):
+
+    # Extract mapping data.
+    msa_name = data_and_model_kwargs['data_kwargs']['MSA_name']
+    if cbg_mapper is None:
+        cbg_mapper = helper.CensusBlockGroups(base_directory='/dfs/scratch1/safegraph_homes/external_datasets_for_aggregate_analysis/census_block_group_shapefiles_by_state/',
+                                             gdb_files=MSAS_TO_STATE_CBG_FILES[msa_name])
+    msa_shapefile = gpd.read_file('/dfs/scratch1/safegraph_homes/external_datasets_for_aggregate_analysis/msa_shapefiles/tl_2017_us_cbsa/').to_crs(WGS_84_CRS)
+    msa_shapefile['name_without_spaces'] = msa_shapefile['NAME'].map(
+            lambda x:re.sub('[^0-9a-zA-Z]+', '_', x))
+    msa_boundary = msa_shapefile.loc[msa_shapefile['name_without_spaces'] == msa_name]
+    assert len(msa_boundary) == 1
+
+    # Extract final fraction in LIR by CBG.
+    all_log10_lir_by_cbg = {}
+    for t in timesteps_to_plot:
+        lir =  (np.array(model.full_history_for_all_CBGs['latent'][t]) + 
+                np.array(model.full_history_for_all_CBGs['infected'][t]) + 
+                np.array(model.full_history_for_all_CBGs['removed'][t]))
+        lir_per_capita = lir / model.CBG_SIZES
+        log10_lir_per_capita = np.log10(lir_per_capita + 1e-8)
+        all_log10_lir_by_cbg[t] = log10_lir_per_capita
+
+    min_val = np.percentile(all_log10_lir_by_cbg[min(timesteps_to_plot)], 10)
+    max_val = np.percentile(all_log10_lir_by_cbg[max(timesteps_to_plot)], 90)
+
+
+
+    for t in timesteps_to_plot:
+        print("Plotting timestep %i" % t)
+        lir_df = pd.DataFrame({'cbg':model.ALL_UNIQUE_CBGS,
+                               'log10_lir_per_capita':all_log10_lir_by_cbg[t]})
+
+        # match to geometry D.
+        geometry_d = cbg_mapper.geometry_d.copy()
+        geometry_d['cbg'] = geometry_d['GEOID_Data'].map(lambda x:x.split("US")[1]).astype(int)
+        geometry_d = pd.merge(geometry_d,
+                              lir_df,
+                              on='cbg',
+                              how='inner',
+                              validate='one_to_one')
+
+        print("Matched %i CBGs out of %i in SafeGraph data" % (len(geometry_d), len(lir_df)))
+
+        geometry_d = geometry_d.dropna(subset=['log10_lir_per_capita'])
+        print("After dropping NAs, %i rows" % len(geometry_d))
+
+
+        # Filter for CBGs in MSA (just for plotting).
+        nyt_outcomes, nyt_counties, nyt_cbgs, msa_counties, msa_cbgs = get_variables_for_evaluating_msa_model(msa_name)
+        msa_cbgs = set(msa_cbgs)
+        geometry_d = geometry_d.loc[geometry_d['cbg'].map(lambda x:x in msa_cbgs)]
+        print("After filtering for CBGs in MSA, %i CBGs" % (len(geometry_d)))
+
+        fig = plt.figure(figsize=[18, 6])
+
+        # make three plots. First is map. 
+        ax = fig.add_subplot(1, 3, 1)
+        ax.set_title("Log10 fraction ever infected\nDay %i" % (t // 24), fontsize=16)
+        geometry_d.plot(
+                column=geometry_d['log10_lir_per_capita'].values,
+                cmap='Spectral_r',
+                linewidth=0.8,
+                ax=ax,
+                vmin=min_val,
+                vmax=max_val,
+                legend=True)
+        msa_boundary = msa_shapefile.loc[msa_shapefile['name_without_spaces'] == msa_name]
+        assert len(msa_boundary) == 1
+        msa_boundary.boundary.plot(color='black', ax=ax)
+        msa_border_padding = 0
+
+        minx, maxx = msa_boundary.boundary.bounds[['minx', 'maxx']].iloc[0].to_list()
+        miny, maxy = msa_boundary.boundary.bounds[['miny', 'maxy']].iloc[0].to_list()
+        ax.set_xlim([minx - msa_border_padding , maxx + msa_border_padding])
+        ax.set_ylim([miny - msa_border_padding, maxy + msa_border_padding])
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        # SLIR frac
+        ax = fig.add_subplot(1, 3, 2)
+        plot_slir_over_time(model, ax, timesteps_to_plot=t)
+
+        ax = fig.add_subplot(1, 3, 3)
+        plot_hourly_poi_visits(model, ax, timesteps_to_plot=t)
+
+        plt.subplots_adjust(wspace=.3)
+
+
+        if path_to_save is not None:
+            fig.savefig(os.path.join(path_to_save % t), dpi=150, bbox_inches='tight')
+    return cbg_mapper
+
+def make_transmission_rate_sensitivity_plot(poi_and_cbg_characteristics, msa_name, 
+                                            category_scoring, valid_categories):
+    score_to_cats = {}
+    for cat in valid_categories:
+        score = category_scoring[cat]
+        if score > 0:
+            if score not in score_to_cats:
+                score_to_cats[score] = []
+            score_to_cats[score].append(cat)
+    scores = sorted(score_to_cats.keys())
+    print('Found categories in scores', scores)
+    
+    cats_to_annotate = []  # which categories to annotate in scatter plot
+    for score, cats in score_to_cats.items():
+        if len(cats) <= 3: 
+            cats_to_annotate.extend(cats)
+        else:  # if there are > 3 cats with this score, annotate 3 most popular 
+            # (assume valid_categories in order of popularity)
+            top3_cats = [cat for cat in valid_categories if category_scoring[cat] == score][:3]
+            cats_to_annotate.extend(top3_cats)
+    print('Will annotate:', cats_to_annotate)
+    
+    fig, axes = plt.subplots(1, 3, figsize=(25, 10))
+    fig.suptitle('%s: first week of March 2020' % MSAS_TO_PRETTY_NAMES[msa_name], fontsize=20)
+    plt.subplots_adjust(wspace=.3, top=0.90)
+    modes = ['normal', 'only_time_spent', 'drop_dwell_time']
+    labels = ['Original parametric equation', 'Only time spent', 'Only density']
+    colors = ['tab:blue', 'tab:orange', 'tab:green']
+    all_results = []
+    for i in range(len(modes)):
+        mode, label, color, ax = modes[i], labels[i], colors[i], axes[i]
+        poi_attr = get_poi_attributes_for_msa(poi_and_cbg_characteristics, msa_name, 
+                                              start_idx=0, end_idx=168, mode=modes[i])
+        y_min = 100
+        y_max = -100
+        kept_scores = []
+        medians = []
+        all_cats = []
+        all_y = []
+        for score in scores:
+            cat_attr = get_category_attributes_from_poi_attributes(poi_attr, score_to_cats[score])
+            cat_attr = cat_attr[cat_attr['total_num_visits'] > 0]
+            n_cats = len(cat_attr)
+            if n_cats > 0:
+                x = np.ones(n_cats) * score
+                y = cat_attr.avg_transmission_rate.values
+                ax.scatter(x, y, alpha=0.8, color=color)
+                kept_scores.append(score)
+                medians.append(np.median(y))
+                all_cats.extend(cat_attr.category.values)
+                all_y.extend(y)
+                y_min = min(y_min, min(y))
+                y_max = max(y_max, max(y))
+                for cat, x_pt, y_pt in zip(cat_attr.category.values, x, y):
+                    if cat in cats_to_annotate:
+                        if score != max(scores):
+                            ax.annotate(cat, (x_pt, y_pt), ha='left', fontsize=14)
+                        else:
+                            ax.annotate(cat, (x_pt, y_pt), ha='right', fontsize=14)
+
+        ax.plot(kept_scores, medians, color='grey', label='median transmission\nrate', alpha=0.5)
+        ax.legend(fontsize=14, loc='lower right')
+        ax.set_xticks(kept_scores)
+        ax.set_xlabel('External risk score', fontsize=16)
+        if i % 3 == 0:
+            ax.set_ylabel('Avg transmission rate', fontsize=16)
+        ax.tick_params(labelsize=14)
+        ax.set_title(label, fontsize=18)
+        offset = (y_max - y_min) * .1
+        ax.set_ylim(y_min - offset, y_max + offset)
+        results_df = pd.DataFrame({'category':all_cats, 'avg_transmission_rate':all_y})
+        results_df['mode'] = mode
+        all_results.append(results_df)
+    all_results = pd.concat(all_results)
+    return all_results
+
+from scipy.spatial import ConvexHull
+from matplotlib.colors import LinearSegmentedColormap
+
+def make_identifiability_plot(fig, all_results_for_identifiability_plot, make_contour_plot,
+                              key_to_sort_by, metric, 
+                              min_threshold=None, do_logsumexp=False, plot_ratio=False):
+    
+    cmap = plt.cm.get_cmap('cool')
+    cmap_colors = cmap(np.arange(cmap.N))    
+
+    N = 256
+    spacing = np.concatenate((
+        np.linspace(0, 0.33, N/2, endpoint=False),
+        np.linspace(0.33, 1.0, N/2)))
+    colors = cmap_colors[:, :3]
+    spacing_and_colors = []
+    for i in range(N):
+        spacing_and_colors.append((spacing[i], colors[i, :]))
+
+    cmap = LinearSegmentedColormap.from_list(
+        name='new_cool',
+        colors=spacing_and_colors)
+    
+    param1 = 'home_beta'
+    param2 = 'poi_psi'
+    pretty_param_names = {
+        "home_beta":r"$\beta$ (base CBG transmission rate)", 
+        'poi_psi':'$\Psi$ (scaling for POI transmission)'}
+
+    for subplot_idx, MSA in enumerate(sorted(list(MSAS_TO_PRETTY_NAMES.keys()))):
+        print(MSA)
+        # load all models for MSA
+        all_results = all_results_for_identifiability_plot[MSA].copy()
+
+        all_results = all_results.loc[(all_results['poi_psi'] > 0)]
+
+        # find best-fit model, using our normal metric. 
+        all_results = all_results.sort_values(by=key_to_sort_by)
+        assert all_results['poi_psi'].iloc[0] > 0
+        best_fit_cumulative_predicted_cases = all_results.iloc[0]['loss_dict_cumulative_predicted_cases']
+        best_fit_params = (all_results.iloc[0][param1], all_results.iloc[0][param2])        
+        n_seeds = best_fit_cumulative_predicted_cases.shape[0]
+        seed_cutoff = n_seeds // 2
+        assert seed_cutoff * 2 == n_seeds
+
+        # compute the "ground truth": mean of first half of seeds for best-fit model (cumulative predictions)
+        y_true_cumulative = best_fit_cumulative_predicted_cases[:seed_cutoff, :].mean(axis=0)
+        y_true_cumulative = np.round(y_true_cumulative, 0).astype(int)  # y_true needs to be int for poisson
+        losses = []
+        for i in range(len(all_results)):
+            # prediction - use second half of seeds. 
+            y_pred_cumulative = all_results.iloc[i]['loss_dict_cumulative_predicted_cases'][seed_cutoff:, :]
+            # loss is daily RMSE. 
+            losses.append(compute_loss(y_true=y_true_cumulative, 
+                                       y_pred=y_pred_cumulative,
+                                       metric=metric,
+                                       min_threshold=min_threshold,
+                                       compare_daily_not_cumulative=True,
+                                       do_logsumexp=do_logsumexp))
+        print("Indices of models with five lowest losses: %s. Min loss = %.4f." % 
+             (np.argsort(losses)[:5], min(losses)))
+
+        if make_contour_plot:
+
+            df_to_plot = all_results[['home_beta', 'poi_psi', 'p_sick_at_t0', key_to_sort_by]].copy()
+            df_to_plot['simulated_loss'] = losses
+            assert df_to_plot[key_to_sort_by].iloc[0] == df_to_plot[key_to_sort_by].values.min()
+            grouped = df_to_plot.groupby([param1, param2])[key_to_sort_by].min().reset_index()
+            M = len(set(grouped[param1]))
+            N = len(set(grouped[param2]))
+
+            X = np.reshape(grouped[param1].values, [M, N])
+            Y = np.reshape(grouped[param2].values, [M, N])
+            Z = np.reshape(grouped[key_to_sort_by].values, [M, N])
+            if plot_ratio:
+                Z = np.log10(Z/Z.min())
+            else:
+                offset = Z.min()
+                log_offset = np.log10(offset)
+                Z = np.log10(Z) - log_offset
+
+            upper_boundary = 5
+            Z[Z > np.log10(upper_boundary)] = np.log10(upper_boundary) # clip so colormap doesn't turn it white.             
+            ax = fig.add_subplot(5, 2, subplot_idx + 1)
+            ax.contourf(X, Y, Z, levels=list(np.linspace(0, np.log10(upper_boundary), 20)), cmap=cmap)#, vmin=0, vmax=np.log10(upper_boundary))#,norm=matplotlib.colors.LogNorm(vmin=1, vmax=1000, bins=50))
+            ax.set_title(MSAS_TO_PRETTY_NAMES[MSA]);
+            if subplot_idx >= 8:
+                ax.set_xlabel(pretty_param_names[param1])
+            if subplot_idx % 2 == 0:
+                ax.set_ylabel(pretty_param_names[param2])
+            ax.set_xlim(X.min(), X.max())
+            ax.set_ylim(Y.min(), Y.max())
+            m = plt.cm.ScalarMappable(cmap=cmap)
+            m.set_array(Z)
+            m.set_clim(0., np.log10(upper_boundary))
+            cb = plt.colorbar(m, ticks=[0, np.log10(upper_boundary)], extend='max')#, boundaries=np.linspace(0, 2, 10))
+            if plot_ratio:                
+                cb.ax.set_yticklabels(['1', str(upper_boundary)])
+                cb.ax.set_ylabel("Ratio of %s" % metric)
+            else:
+                cb.ax.set_yticklabels([f'{offset:.0f}', f'{upper_boundary * offset:.0f}'])
+                cb.ax.set_ylabel("%s" % metric)
+                cb.ax.yaxis.set_label_coords(2.0, 0.5)
+
+            points = grouped.loc[grouped[key_to_sort_by] <= (ACCEPTABLE_LOSS_TOLERANCE*grouped[key_to_sort_by].min()), 
+                                         [param1, param2]].values
+            print('Num best fit models:', len(points))
+            try:
+                hull = ConvexHull(points)                                     
+                for simplex in hull.simplices:
+                    ax.plot(points[simplex, 0], points[simplex, 1], color='white')
+            except:
+                x_pts = points[:, 0]
+                y_pts = points[:, 1]
+                ax.scatter(x_pts, y_pts, color='white')
+        
+        else:
+            ax = fig.add_subplot(5, 2, subplot_idx + 1)
+            ax.plot(range(1, len(losses) + 1), losses)
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+            plt.xticks([1, 10, 100, 1000], ['Best-fit model', '10', '100', '1000'])
+            ax.set_xlim([1, len(losses)])            
+            if subplot_idx >= 8:
+                ax.set_xlabel("Model rank by %s on real data" % metric)
+            if subplot_idx % 2 == 0:
+                ax.set_ylabel("%s on simulated data" % metric)
+            ax.set_title(MSAS_TO_PRETTY_NAMES[MSA])
+    plt.show()
+
+def get_frac_infected_over_time_per_category(results_df, poi_and_cbg_characteristics, msa_name, categories_to_plot):
+    msa_df = results_df[results_df['MSA_name'] == msa_name]
+    poi_categories = poi_and_cbg_characteristics[msa_name]['poi_categories']
+    pretty_names = np.array([SUBCATEGORIES_TO_PRETTY_NAMES[x] if x in SUBCATEGORIES_TO_PRETTY_NAMES else x for x in poi_categories])
+    results_per_seed = []
+    for ts in msa_df.timestring.values:
+        model, _, _, _, fast_to_load_results = load_model_and_data_from_timestring(ts,
+                                                                               load_fast_results_only=False,
+                                                                               load_full_model=True)
+        num_cases_per_poi = model.history['all']['num_cases_per_poi']
+        pop_size = model.history['all']['total_pop']
+        assert len(num_cases_per_poi.shape) == 3  # must be seed x poi x time
+        for s in range(len(num_cases_per_poi)):  # iterate through seeds
+            total_frac_infected_at_pois_per_day = np.sum(num_cases_per_poi[s], axis=0) / pop_size  # sum over all pois
+            frac_infected_per_cat_and_day = []
+            for cat in categories_to_plot:
+                cat_idx = pretty_names == cat
+                assert np.sum(cat_idx) > 10  # there should be at least 10 POIs in this category
+                frac_infected_at_cat_per_day = np.sum(num_cases_per_poi[s][cat_idx], axis=0) / pop_size  # sum over pois within cat
+                frac_infected_per_cat_and_day.append(frac_infected_at_cat_per_day)
+            results_per_seed.append((frac_infected_per_cat_and_day, total_frac_infected_at_pois_per_day))
+    print('Num params * seeds:', len(results_per_seed))
+    return results_per_seed
+    
+def plot_stacked_infection_proportions_over_categories(results_per_seed, categories_in_results, 
+                                                       categories_to_plot, msa_name, ax, y_max=1.0, smooth=True):
+    '''
+    Note: relies on output from get_frac_infections_per_category_over_seeds.
+    '''
+    dates = helper.list_datetimes_in_range(MIN_DATETIME, MAX_DATETIME)
+    bottom = np.zeros(len(dates))
+    for cat in categories_to_plot:
+        assert cat in categories_in_results
+        i = categories_in_results.index(cat)
+        prop_infections_over_seeds = []
+        for s in range(len(results_per_seed)):
+            frac_infected = results_per_seed[s][0][i]  # fraction of population infected at this cat per day
+            total_frac_infected = results_per_seed[s][1]  # total fraction of population infected at POIs per day
+            prop_infections = frac_infected / total_frac_infected  # proportion of POI infections at this cat per day
+            prop_infections_over_seeds.append(prop_infections)
+        mean_prop_infections_per_day = np.mean(np.array(prop_infections_over_seeds), axis=0)  # average over seeds
+        if smooth:
+            mean_prop_infections_per_day = apply_smoothing(mean_prop_infections_per_day, before=3, after=3)
+        top = bottom + mean_prop_infections_per_day
+        ax.fill_between(dates, bottom, top, label=cat, alpha=0.5)
+        bottom = top
+    ceiling = np.ones(len(bottom)) * y_max
+    assert all(bottom < ceiling)
+    ax.fill_between(dates, bottom, ceiling, label='Other')
+    
+    ax.xaxis.set_major_locator(mdates.WeekdayLocator(mdates.SU, interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+    ax.set_xlabel('Date', fontsize=16)
+    ylabel = 'Proportion of daily\nPOI infections'
+    ax.set_ylabel(ylabel, fontsize=16)
+    ax.tick_params(labelsize=14)
+    ax.set_title(MSAS_TO_PRETTY_NAMES[msa_name], fontsize=20)
