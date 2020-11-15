@@ -46,6 +46,7 @@ import dask.dataframe as dd
 # in old base dir (scratch1)
 BASE_DIR = '/dfs/scratch1/safegraph_homes/'
 UNZIPPED_DATA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/20191213-safegraph-aggregate-longitudinal-data-to-unzip-to/')
+PATH_TO_OVERALL_HOME_PANEL_SUMMARY = os.path.join(UNZIPPED_DATA_DIR, 'SearchofAllRecords-CORE_POI-GEOMETRY-PATTERNS-2020_02-2020-03-16/visit_panel_summary.csv')
 ANNOTATED_H5_DATA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/chunks_with_demographic_annotations/')
 CHUNK_FILENAME = 'chunk_1.2017-3.2020_c2.h5'
 STRATIFIED_BY_AREA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/chunks_with_demographic_annotations_stratified_by_area/')

@@ -278,7 +278,7 @@ def fit_disease_model_on_real_data(d,
         # SafeGraph thinks this is reasonable.
         # https://safegraphcovid19.slack.com/archives/C0109NPA543/p1586801883190800?thread_ts=1585770817.335800&cid=C0109NPA543
         total_us_population_in_50_states_plus_dc = acs_d.loc[acs_d['state_code'].map(lambda x:x in FIPS_CODES_FOR_50_STATES_PLUS_DC), 'total_cbg_population_2018_1YR'].sum()
-        safegraph_visitor_count_df = pd.read_csv('/dfs/scratch1/safegraph_homes/all_aggregate_data/20191213-safegraph-aggregate-longitudinal-data-to-unzip-to/SearchofAllRecords-CORE_POI-GEOMETRY-PATTERNS-2020_02-2020-03-16/visit_panel_summary.csv')
+        safegraph_visitor_count_df = pd.read_csv(PATH_TO_OVERALL_HOME_PANEL_SUMMARY)
         safegraph_visitor_count = safegraph_visitor_count_df.loc[safegraph_visitor_count_df['state'] == 'ALL_STATES', 'num_unique_visitors'].iloc[0]
 
         # remove a few safegraph visitors from non-US states.
