@@ -52,8 +52,12 @@ STRATIFIED_BY_AREA_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/chunks_with_
 PATH_TO_SAFEGRAPH_AREAS = os.path.join(BASE_DIR, 'all_aggregate_data/safegraph_poi_area_calculations/SafeGraphPlacesGeoSupplementSquareFeet.csv.gz')
 PATH_TO_IPF_OUTPUT = os.path.join(BASE_DIR, 'all_aggregate_data/ipf_output/')
 OLD_FITTED_MODEL_DIR = os.path.join(BASE_DIR, 'all_aggregate_data/fitted_models/')
+PATH_TO_SDM_V1 = os.path.join(BASE_DIR, 'all_aggregate_data/daily_counts_of_people_leaving_homes/sg-social-distancing/')
+PATH_TO_SDM_V2 = os.path.join(BASE_DIR, 'all_aggregate_data/daily_counts_of_people_leaving_homes/social_distancing_v2/')
+PATH_TO_WEEKLY_PATTERNS = os.path.join(BASE_DIR, 'all_aggregate_data/weekly_patterns_data/v1/main-file/')
+PATH_TO_HOME_PANEL_SUMMARY = os.path.join(BASE_DIR, 'all_aggregate_data/weekly_patterns_data/v1/home_summary_file/')
 
-# in new base dir
+# in new base dir (scratch2)
 NEW_BASE_DIR = '/dfs/scratch2/second_safegraph_homes/'
 FITTED_MODEL_DIR = os.path.join(NEW_BASE_DIR, 'extra_safegraph_aggregate_models/')
 CURRENT_DATA_DIR = os.path.join(NEW_BASE_DIR, 'all_aggregate_data/20201028_download/')  # most recent data download
@@ -62,6 +66,7 @@ CURRENT_DATA_DIR = os.path.join(NEW_BASE_DIR, 'all_aggregate_data/20201028_downl
 PATH_TO_ACS_1YR_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/2018_one_year_acs_population_data/nhgis0001_ds239_20185_2018_blck_grp.csv')
 PATH_TO_ACS_5YR_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/2017_five_year_acs_data/2017_five_year_acs_data.csv')
 PATH_TO_CENSUS_BLOCK_GROUP_DATA = os.path.join(BASE_DIR, 'base_dir_for_all_new_data_and_results/non_safegraph_datasets/census_block_group_data/ACS_5_year_2013_to_2017_joined_to_blockgroup_shapefiles/') # census block group boundaries.
+PATH_FOR_CBG_MAPPER = os.path.join(BASE_DIR, 'old_dfs_scratch0_directory_contents/new_census_data/')
 PATH_TO_COUNTY_TO_MSA_MAPPING = os.path.join(BASE_DIR, 'base_dir_for_all_new_data_and_results/non_safegraph_datasets/census_block_group_data/august_2017_county_to_metropolitan_mapping.csv') # maps counties to MSAs, consistent with the Experienced Segregation paper. Data was downloaded from https://www2.census.gov/programs-surveys/metro-micro/geographies/reference-files/2017/delineation-files/list1.xls.
 PATH_TO_NYT_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/nytimes_coronavirus_data/covid-19-data/us-counties.csv')
 PATH_TO_GOOGLE_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/20200508_google_mobility_report.csv')
@@ -77,6 +82,10 @@ TOPCATEGORY_CLIPPING_THRESH = 50
 MAX_MODELS_TO_TAKE_PER_MSA = 100
 ACCEPTABLE_LOSS_TOLERANCE = 1.2
 WGS_84_CRS = {'init' :'epsg:4326'}
+
+# helper variables useful for experiments
+# automatically read weekly strings so we don't have to remember to update it each week.
+ALL_WEEKLY_STRINGS = sorted([a.replace('-weekly-patterns.csv.gz', '') for a in os.listdir('/dfs/scratch1/safegraph_homes/all_aggregate_data/weekly_patterns_data/v1/main-file/')])
 
 FIPS_CODES_FOR_50_STATES_PLUS_DC = { # https://gist.github.com/wavded/1250983/bf7c1c08f7b1596ca10822baeb8049d7350b0a4b
     "10": "Delaware",

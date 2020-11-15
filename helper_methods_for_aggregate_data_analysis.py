@@ -17,8 +17,6 @@ import os
 from geopandas.tools import sjoin
 import time
 
-# automatically read weekly strings so we don't have to remember to update it each week.
-ALL_WEEKLY_STRINGS = sorted([a.replace('-weekly-patterns.csv.gz', '') for a in os.listdir('/dfs/scratch1/safegraph_homes/all_aggregate_data/weekly_patterns_data/v1/main-file/')])
 try:
     cast_to_datetime = [datetime.datetime.strptime(s, '%Y-%m-%d') for s in ALL_WEEKLY_STRINGS]
 except:
@@ -39,11 +37,9 @@ def load_social_distancing_metrics(datetimes, version='v2'):
     concatenated_d = None
     for dt in datetimes:
         if version == 'v1':
-            path = os.path.join('/dfs/scratch1/safegraph_homes/all_aggregate_data/daily_counts_of_people_leaving_homes/sg-social-distancing/',
-                            dt.strftime('%Y/%m/%d/%Y-%m-%d-social-distancing.csv.gz'))
+            path = os.path.join(PATH_TO_SDM_V1, dt.strftime('%Y/%m/%d/%Y-%m-%d-social-distancing.csv.gz'))
         elif version == 'v2':
-            path = os.path.join('/dfs/scratch1/safegraph_homes/all_aggregate_data/daily_counts_of_people_leaving_homes/social_distancing_v2/',
-                            dt.strftime('%Y/%m/%d/%Y-%m-%d-social-distancing.csv.gz'))
+            path = os.path.join(PATH_TO_SDM_V2, dt.strftime('%Y/%m/%d/%Y-%m-%d-social-distancing.csv.gz'))
         else:
             raise Exception("Version should be v1 or v2")
 
@@ -95,7 +91,7 @@ def annotate_with_demographic_info_and_write_out_in_chunks(full_df, just_testing
     # map to demo info. The basic class we use here is CensusBlockGroups, which processes the Census data. 
     print("Mapping SafeGraph POIs to demographic info, including race and income.")
     gdb_files = ['ACS_2017_5YR_BG_51_VIRGINIA.gdb'] if just_testing else None
-    cbg_mapper = CensusBlockGroups(base_directory='/dfs/scratch1/safegraph_homes/old_dfs_scratch0_directory_contents/new_census_data/', gdb_files=gdb_files)
+    cbg_mapper = CensusBlockGroups(base_directory=PATH_FOR_CBG_MAPPER, gdb_files=gdb_files)
     pop_df = load_dataframe_to_correct_for_population_size()
     chunksize = 100000
 
@@ -254,7 +250,7 @@ def load_patterns_data(month=None, year=None, week_string=None, extra_cols=[], j
         month_and_year = False
         assert month is None and year is None
         assert week_string in ALL_WEEKLY_STRINGS
-        filepath = os.path.join('/dfs/scratch1/safegraph_homes/all_aggregate_data/weekly_patterns_data/v1/main-file/%s-weekly-patterns.csv.gz' % week_string)
+        filepath = os.path.join(PATH_TO_WEEKLY_PATTERNS, '%s-weekly-patterns.csv.gz' % week_string)
         # Filename is misleading - it is really a zipped file.
         # Also, we're missing some columns that we had before, so I think we're just going to have to join on SafeGraph ID.
         x = pd.read_csv(filepath, escapechar='\\', compression='gzip', nrows=10000 if just_testing else None, usecols=['safegraph_place_id',
@@ -725,8 +721,7 @@ def load_dataframe_to_correct_for_population_size(just_load_census_data=False):
 
     # now weeks
     for date_string in ALL_WEEKLY_STRINGS:
-        all_filenames.append(
-            '/dfs/scratch1/safegraph_homes/all_aggregate_data/weekly_patterns_data/v1/home_summary_file/%s-home-panel-summary.csv' % date_string)
+        all_filenames.append(os.path.join(PATH_TO_HOME_PANEL_SUMMARY, '%s-home-panel-summary.csv' % date_string))
         all_date_strings.append(date_string)
 
     cbgs_with_ratio_above_one = np.array([False for a in range(len(acs_data))])
@@ -852,9 +847,7 @@ def compute_cbg_day_prop_out(sdm_of_interest, cbgs_of_interest=None):
     return prop_df
 
 def write_out_acs_5_year_data():
-    cbg_mapper = CensusBlockGroups(
-        base_directory='/dfs/scratch1/safegraph_homes/old_dfs_scratch0_directory_contents/new_census_data/',
-        gdb_files=None)
+    cbg_mapper = CensusBlockGroups(base_directory=PATH_FOR_CBG_MAPPER, gdb_files=None)
 
     geometry_cols = ['STATEFP',
               'COUNTYFP',
