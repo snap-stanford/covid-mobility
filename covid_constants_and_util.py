@@ -67,6 +67,8 @@ PATH_TO_ACS_1YR_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_a
 PATH_TO_ACS_5YR_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/2017_five_year_acs_data/2017_five_year_acs_data.csv')
 PATH_TO_CENSUS_BLOCK_GROUP_DATA = os.path.join(BASE_DIR, 'base_dir_for_all_new_data_and_results/non_safegraph_datasets/census_block_group_data/ACS_5_year_2013_to_2017_joined_to_blockgroup_shapefiles/') # census block group boundaries.
 PATH_FOR_CBG_MAPPER = os.path.join(BASE_DIR, 'old_dfs_scratch0_directory_contents/new_census_data/')
+PATH_FOR_CBG_MAPPER_BY_STATE = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/census_block_group_shapefiles_by_state/')
+PATH_TO_MSA_SHAPEFILES = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/msa_shapefiles/tl_2017_us_cbsa/')
 PATH_TO_COUNTY_TO_MSA_MAPPING = os.path.join(BASE_DIR, 'base_dir_for_all_new_data_and_results/non_safegraph_datasets/census_block_group_data/august_2017_county_to_metropolitan_mapping.csv') # maps counties to MSAs, consistent with the Experienced Segregation paper. Data was downloaded from https://www2.census.gov/programs-surveys/metro-micro/geographies/reference-files/2017/delineation-files/list1.xls.
 PATH_TO_NYT_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/nytimes_coronavirus_data/covid-19-data/us-counties.csv')
 PATH_TO_GOOGLE_DATA = os.path.join(BASE_DIR, 'external_datasets_for_aggregate_analysis/20200508_google_mobility_report.csv')
@@ -86,6 +88,30 @@ WGS_84_CRS = {'init' :'epsg:4326'}
 # helper variables useful for experiments
 # automatically read weekly strings so we don't have to remember to update it each week.
 ALL_WEEKLY_STRINGS = sorted([a.replace('-weekly-patterns.csv.gz', '') for a in os.listdir('/dfs/scratch1/safegraph_homes/all_aggregate_data/weekly_patterns_data/v1/main-file/')])
+MIN_DATETIME = datetime.datetime(2020, 3, 1, 0)
+MAX_DATETIME = datetime.datetime(2020, 5, 2, 23)
+# 10 MSAs with most POIs in SafeGraph data
+MSAS = ['Atlanta_Sandy_Springs_Roswell_GA',
+        'Chicago_Naperville_Elgin_IL_IN_WI',
+        'Dallas_Fort_Worth_Arlington_TX',
+        'Houston_The_Woodlands_Sugar_Land_TX',
+        'Los_Angeles_Long_Beach_Anaheim_CA',
+        'Miami_Fort_Lauderdale_West_Palm_Beach_FL',
+        'New_York_Newark_Jersey_City_NY_NJ_PA',
+        'Philadelphia_Camden_Wilmington_PA_NJ_DE_MD',
+        'San_Francisco_Oakland_Hayward_CA',
+        'Washington_Arlington_Alexandria_DC_VA_MD_WV']
+HIGHLIGHT_MSA = 'Chicago_Naperville_Elgin_IL_IN_WI'
+
+LOWER_PERCENTILE = 2.5
+UPPER_PERCENTILE = 97.5
+INCIDENCE_POP = 100000
+PATH_TO_SAVED_CHARACTERISTICS = os.path.join(BASE_DIR, 'all_aggregate_data/poi_and_cbg_characteristics.pkl')
+# for equity analysis
+LOWINCOME = 'median_household_income_bottom_decile'
+HIGHINCOME = 'median_household_income_top_decile'
+WHITE = 'p_white_top_decile'
+NONWHITE = 'p_white_bottom_decile'
 
 FIPS_CODES_FOR_50_STATES_PLUS_DC = { # https://gist.github.com/wavded/1250983/bf7c1c08f7b1596ca10822baeb8049d7350b0a4b
     "10": "Delaware",

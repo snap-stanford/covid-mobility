@@ -12,31 +12,6 @@ import os
 import pickle
 import math
 
-MIN_DATETIME = datetime.datetime(2020, 3, 1, 0)
-MAX_DATETIME = datetime.datetime(2020, 5, 2, 23)
-MSAS = ['Atlanta_Sandy_Springs_Roswell_GA',
-        'Chicago_Naperville_Elgin_IL_IN_WI',
-        'Dallas_Fort_Worth_Arlington_TX',
-        'Houston_The_Woodlands_Sugar_Land_TX',
-        'Los_Angeles_Long_Beach_Anaheim_CA',
-        'Miami_Fort_Lauderdale_West_Palm_Beach_FL',
-        'New_York_Newark_Jersey_City_NY_NJ_PA',
-        'Philadelphia_Camden_Wilmington_PA_NJ_DE_MD',
-        'San_Francisco_Oakland_Hayward_CA',
-        'Washington_Arlington_Alexandria_DC_VA_MD_WV']
-HIGHLIGHT_MSA = 'Chicago_Naperville_Elgin_IL_IN_WI'
-
-LOWER_PERCENTILE = 2.5
-UPPER_PERCENTILE = 97.5
-INCIDENCE_POP = 100000
-PATH_TO_SAVED_CHARACTERISTICS = '/dfs/scratch1/safegraph_homes/all_aggregate_data/poi_and_cbg_characteristics.pkl'
-
-# for equity analysis
-LOWINCOME = 'median_household_income_bottom_decile'
-HIGHINCOME = 'median_household_income_top_decile'
-WHITE = 'p_white_top_decile'
-NONWHITE = 'p_white_bottom_decile'
-
 ###################################################################################
 # Figure 1: model fit
 ###################################################################################
@@ -1810,9 +1785,9 @@ def plot_disease_spread_over_time(
     # Extract mapping data.
     msa_name = data_and_model_kwargs['data_kwargs']['MSA_name']
     if cbg_mapper is None:
-        cbg_mapper = helper.CensusBlockGroups(base_directory='/dfs/scratch1/safegraph_homes/external_datasets_for_aggregate_analysis/census_block_group_shapefiles_by_state/',
+        cbg_mapper = helper.CensusBlockGroups(base_directory=PATH_FOR_CBG_MAPPER_BY_STATE,
                                              gdb_files=MSAS_TO_STATE_CBG_FILES[msa_name])
-    msa_shapefile = gpd.read_file('/dfs/scratch1/safegraph_homes/external_datasets_for_aggregate_analysis/msa_shapefiles/tl_2017_us_cbsa/').to_crs(WGS_84_CRS)
+    msa_shapefile = gpd.read_file(PATH_TO_MSA_SHAPEFILES).to_crs(WGS_84_CRS)
     msa_shapefile['name_without_spaces'] = msa_shapefile['NAME'].map(
             lambda x:re.sub('[^0-9a-zA-Z]+', '_', x))
     msa_boundary = msa_shapefile.loc[msa_shapefile['name_without_spaces'] == msa_name]
