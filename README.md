@@ -1,7 +1,6 @@
 # covid-mobility
 
-Code to generate results in "[Mobility network modeling explains higher SARS-CoV-2 infection rates among disadvantaged groups
-and informs reopening strategies](https://www.medrxiv.org/content/10.1101/2020.06.15.20131979v1)" (2020) by Serina Y Chang, Emma Pierson, Pang Wei Koh, Jaline Gerardin, Beth Redbird, David Grusky, and Jure Leskovec. 
+Code to generate results in "[Mobility network models of COVID-19 explain inequities and inform reopening](https://www.medrxiv.org/content/10.1101/2020.06.15.20131979v1)" (2020) by Serina Y Chang, Emma Pierson, Pang Wei Koh, Jaline Gerardin, Beth Redbird, David Grusky, and Jure Leskovec. 
 
 ## Regenerating results
 
@@ -29,23 +28,28 @@ and informs reopening strategies](https://www.medrxiv.org/content/10.1101/2020.0
         - `test_retrospective_counterfactuals`: This simulates the impacts of various counterfactuals of past mobility reduction on infection outcomes. This is moderately expensive computationally (several hundred jobs), because it runs one model for each counterfactual setting, MSA, and best-fit model parameter setting.
         - `test_max_capacity_clipping`: This tests the effects of partial reopening by ''clipping'' each POI's visits to a fraction of its maximum capacity (or occupancy).  This will start around 1000 jobs, running one model for each level of clipping, MSA, and best-fit model parameter setting.
         - `test_uniform_proportion_of_full_reopening`: This tests the effects of partial reopening by uniformly reducing visits to each POI from their activity levels in early March. This will also start around 1000 jobs, running one model for each level of reopening, MSA, and best-fit model parameter setting.
-        - `rerun_best_models_and_save_cases_per_poi`: This reruns the best-fit models for each MSA and saves the expected number of infectons that occurred at each POI. We do not save infections per POI by default, because this takes up too much space and slows down the simulation process. This is the least computationally expensive of the experiments, just running each best-fit model parameter setting once.
+        - `rerun_best_models_and_save_cases_per_poi`: This reruns the best-fit models for each MSA and saves the expected number of infectons that occurred at each POI on each day. We do not save infections per POI by default, because this takes up too much space and slows down the simulation process. This is the least computationally expensive of the experiments, just running each best-fit model parameter setting once.
 
-5. **Analyzing models and generating figures for paper**. Once models have been run, figures and results in the paper can be reproduced by running `make_figures.ipynb`.
+5. **Analyzing models and generating results for paper**. Once models have been run, figures and results in the paper can be reproduced by running `make_figures.ipynb` and `supplementary_analyses.ipynb`. See below for details.
 
 ## Files
 
 **covid_constants_and_util.py**: Constants and general utility methods. 
 
+**disease_model.py**: Implements the disease model on the mobility network. 
+
 **helper_methods_for_aggregate_data_analysis.py**: Various helper methods used in data processing and throughout the analysis. 
 
-**disease_model.py**: Implements the disease model on the mobility network. 
+**make_figures.ipynb**: Once the models have been run, reproduces the main figures (Figures 1-3) and all of the Extended Data and SI figures and tables that are directly related to the main figures (e.g., results for all metro areas, in the case that the main figure only highlights one metro area).
+
+**make_network_map.ipynb**: Constructs the POI-CBG spatial maps in Figure 1a.
 
 **model_experiments.py**: Runs models for the experiments described in the paper. 
 
 **process_safegraph_data.ipynb**: Processes the raw SafeGraph data. 
 
-**make_figures.ipynb**: Once the models have been run, reproduces figures and other results in the paper. 
-
 **safegraph_env_v3.yml**: Used to set up the conda environment. 
 
+**supplementary_analyses.ipynb**: Once the models have been run, reproduces the remaining Extended Data and SI figures and tables, including sensitivity analyses and checks for parameter identifiability.
+
+**test_google_correlation.ipynb**: Tests the correlation between Google and SafeGraph mobility data.
