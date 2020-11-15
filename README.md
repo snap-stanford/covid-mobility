@@ -1,14 +1,14 @@
 # covid-mobility
 
-Code to generate results in "[Mobility network models of COVID-19 explain inequities and inform reopening](https://www.medrxiv.org/content/10.1101/2020.06.15.20131979v1)" (2020) by Serina Y Chang, Emma Pierson, Pang Wei Koh, Jaline Gerardin, Beth Redbird, David Grusky, and Jure Leskovec. 
+Code to generate results in "[Mobility network models of COVID-19 explain inequities and inform reopening](https://www.nature.com/articles/s41586-020-2923-3)" (2020) by Serina Y Chang*, Emma Pierson*, Pang Wei Koh*, Jaline Gerardin, Beth Redbird, David Grusky, and Jure Leskovec. 
 
 ## Regenerating results
 
 1. **Setting up virtualenv**. Our code is run in a conda environment, with all analysis performed on a Linux Ubuntu system. You can set up this environment by running `conda env create --prefix YOUR_PATH_HERE --file safegraph_env_v3.yml`. Once you have set up the environment, activate it prior to running any code by running `source YOUR_PATH_HERE/bin/activate`. 
 
-2. **Downloading datasets**.
+2. **Downloading datasets**. We specify paths to datasets in `covid_constants_and_util.py`. Note that specific filenames are still referenced in other files, following their naming constructs in the downloaded data (e.g., `os.path.join(PATH_TO_SDM_V1, dt.strftime('%Y/%m/%d/%Y-%m-%d-social-distancing.csv.gz'))` in `helper_methods_for_aggregate_data_analysis.py`). You may need to modify these paths and/or filenames if your file structure or naming constructs are different.
 
-    - SafeGraph data is freely available to researchers, non-profits, and governments through the [SafeGraph COVID-19 Data Consortium](https://www.safegraph.com/covid-19-data-consortium). As described in the Methods section, we use v1 of the Weekly Patterns Data from March 1 - May 2 2020; Monthly Patterns data from January 2019 - February 2020; and Social Distancing Metrics from March 1 2020 - May 2, 2020. 
+    - Our estimated hourly mobility networks (IPFP output) are available through the [SafeGraph COVID-19 Data Consortium](https://www.safegraph.com/covid-19-data-consortium). The raw data that we used to construct these networks are also available; as described in the Methods section of our paper, we use v1 of the Weekly Patterns Data from March 1 - May 2 2020; Monthly Patterns data from January 2019 - February 2020; and Social Distancing Metrics from March 1 2020 - May 2, 2020. 
     
     - We use case and death count data from *The New York Times*, available [here](https://github.com/nytimes/covid-19-data). While the *The New York Times* updates the data regularly, results in our paper are generated using case and death counts through May 9, 2020. 
     
